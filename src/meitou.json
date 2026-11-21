@@ -1,0 +1,10 @@
+{
+  "id": "fiefdom",
+  "apiVersion": 3,
+  "version": "0.1.0",
+  "assemblies": [
+    "Fiefdom.dll"
+  ],
+  "entry": "Fiefdom.FiefdomMod",
+  "gameVersion": ">=0.22.2"
+}

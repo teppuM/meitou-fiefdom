@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Fiefdom</AssemblyName>
+    <RootNamespace>Fiefdom</RootNamespace>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <!-- The game the mod is compiled against: an official MeitouClient release folder, the one holding MeitouClient.dll
+         (pass -p:MeitouBin=<folder>/). -->
+    <MeitouBin Condition="'$(MeitouBin)' == ''">$(MSBuildThisFileDirectory)../../../official/Meitou-0.22.2-nightly.20261121-win-x64/Meitou-0.22.2-nightly.20261121-win-x64/</MeitouBin>
+  </PropertyGroup>
+
+  <!-- A self-built MeitouClient stamps its assemblies 1.0.0.0, the official releases their game version (0.20.0.0): a mod compiled against a
+       self-built game asks for 1.0.0.0, which no release can supply, and fails to load in every official release. -->
+  <Target Name="RequireReleaseGame" BeforeTargets="ResolveAssemblyReferences">
+    <GetAssemblyIdentity AssemblyFiles="$(MeitouBin)MeitouClient.dll">
+      <Output TaskParameter="Assemblies" ItemName="MeitouGameIdentity" />
+    </GetAssemblyIdentity>
+    <Error Condition="'%(MeitouGameIdentity.Version)' == '1.0.0.0'"
+           Text="$(MeitouBin)MeitouClient.dll is a self-built game (version 1.0.0.0). Compile against an official MeitouClient release folder, or the mod will not load in the official releases." />
+  </Target>
+
+  <ItemGroup>
+    <Reference Include="MeitouClient" HintPath="$(MeitouBin)MeitouClient.dll" Private="false" />
+    <Reference Include="Meitou.Simulation" HintPath="$(MeitouBin)Meitou.Simulation.dll" Private="false" />
+    <Reference Include="Meitou.Core" HintPath="$(MeitouBin)Meitou.Core.dll" Private="false" />
+    <Reference Include="Meitou.Data" HintPath="$(MeitouBin)Meitou.Data.dll" Private="false" />
+    <Reference Include="0Harmony" HintPath="$(MeitouBin)0Harmony.dll" Private="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="meitou.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

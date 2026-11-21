@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <MeitouBin>../../../../official/Meitou-0.22.2-nightly.20261121-win-x64/Meitou-0.22.2-nightly.20261121-win-x64/</MeitouBin>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Meitou.Core"><HintPath>$(MeitouBin)Meitou.Core.dll</HintPath></Reference>
+    <Reference Include="Meitou.Data"><HintPath>$(MeitouBin)Meitou.Data.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>

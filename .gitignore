@@ -1,0 +1,12 @@
+bin/
+obj/
+out/
+release/
+test/
+design/
+sim/
+.claude/
+FEATURES.md
+tools/FEATURES.md
+tools/town_sim.py
+__pycache__/
