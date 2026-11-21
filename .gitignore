@@ -10,3 +10,5 @@ FEATURES.md
 tools/FEATURES.md
 tools/town_sim.py
 __pycache__/
+art/*.png
+art/*.jpg
