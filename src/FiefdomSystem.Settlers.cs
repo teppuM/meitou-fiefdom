@@ -1044,7 +1044,7 @@ public sealed partial class FiefdomSystem
                 commands.Add(new SetSquadAutonomy(squad.Id, true, Independent: true, Owner: ModId) { Tick = world.Tick });
                 Log($"{squad.Name}: no longer led by the player");
             }
-            if (tag.StartsWith(GuardTag, StringComparison.Ordinal)) KeepGuardsOffIdleJobs(world, squad);
+            if (tag.StartsWith(GuardTag, StringComparison.Ordinal)) KeepGuardsJobsOn(world, squad);
             if (want is null || current.Id == want || _data.Db.Find(want) is null) continue;
             commands.Add(new ChangeAi(squad.Id, want) { Tick = world.Tick });
             Log($"{squad.Name}: package {current.Id} changed to {want}");
@@ -1053,19 +1053,17 @@ public sealed partial class FiefdomSystem
     }
 
     /// <summary>
-    /// Turns the jobs switch off for a guard squad's members. The faction-wide squad AI options (Sit when idle, Sleep when injured, Ditch items)
-    /// give anyone of the player's faction with the switch on and no job of their own an idle job, and jobs come before the package, so guards
-    /// sat in the town's chairs instead of patrolling. Guards hold no posts; a guard with a job of the mod's (fetching a first aid kit, which
-    /// turns the switch on) keeps it until that job is gone. Their package still beds them down at night.
+    /// Keeps the jobs switch on for a guard squad's members. Version 0.1.1 turned it off to keep guards out of the faction-wide idle jobs (Sit when
+    /// idle), but with it off a player-faction character's AI chooses no goal at all (tested headless: guards stood "Aimless" all day, and with
+    /// it on the same guard patrolled at once), so it is turned back on for the guards that version touched. Guards cannot be selected, so the
+    /// switch is never the player's choice for them.
     /// </summary>
-    static void KeepGuardsOffIdleJobs(World world, Squad squad)
+    static void KeepGuardsJobsOn(World world, Squad squad)
     {
         var table = world.Characters;
         foreach (var id in squad.Members)
-        {
-            if (!table.TryResolveNext(id, out int slot) || table.Cold(slot) is not { } cold) continue;
-            if ((cold.Orders & CharacterOrders.Jobs) != 0 && cold.Jobs.Count == 0) cold.Orders &= ~CharacterOrders.Jobs;
-        }
+            if (table.TryResolveNext(id, out int slot) && table.Cold(slot) is { } cold && (cold.Orders & CharacterOrders.Jobs) == 0)
+                cold.Orders |= CharacterOrders.Jobs;
     }
 
     /// <summary>
