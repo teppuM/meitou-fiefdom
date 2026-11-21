@@ -75,7 +75,7 @@ public sealed partial class FiefdomSystem
                     if (!c.IsNone && world.Characters.TryResolveNext(c, out int slot) && world.Characters.Cold(slot) is { } cold) TakeJob(world, c, cold, was.Site);
                 }
                 _runners[id] = key;
-                TownOf(key).Tell(world.GameHours, $"{_residents[id].Name} now carries meals to the town's workers and guards");
+                TownOf(key).Tell(world.GameHours, $"{_residents[id].Name} now carries meals to the town's hungry people");
                 Log($"{town.Name}: {_residents[id].Name} is a food runner");
                 _dirty = true;
                 return true;
@@ -115,7 +115,7 @@ public sealed partial class FiefdomSystem
     }
 
     /// <summary>
-    /// The people of a town to bring a meal to now: workers on shift at their post and guards, in town, alive and awake, below
+    /// The people of a town to bring a meal to now: its residents and guards (not an unpaid worker), in town, alive and awake, below
     /// <see cref="BringFoodBelow"/> and carrying no food, nobody already being brought one; in lasting-id order.
     /// </summary>
     List<ulong> NeedMeals(World world, PlayerTown town, string key, HashSet<ulong> served)
@@ -127,8 +127,9 @@ public sealed partial class FiefdomSystem
         foreach (var (id, r) in _residents)
         {
             if (r.Town != key || served.Contains(id)) continue;
-            bool atWork = _holders.TryGetValue(id, out var h) && OnShift(h.Shift, world.GameHours) && !(_pay.GetValueOrDefault(id)?.Unpaid > 0);
-            if (!atWork && !IsGuard(id)) continue;
+            // Everyone of the town is served, at work or not (the runner is the town's food carrier, not only the workers'); a worker who has
+            // stopped for want of pay is left to fend for themselves.
+            if (_pay.GetValueOrDefault(id)?.Unpaid > 0) continue;
             var c = world.LastingIds.Find(new LastingId(id));
             if (c.IsNone || !table.TryResolveNext(c, out int slot) || !table.Next[slot].Alive) continue;
             if (table.Cold(slot) is not { Medical: { Dead: false, Incapacitated: false } medical, Inventory: { } inv } || medical.Hunger >= BringFoodBelow) continue;

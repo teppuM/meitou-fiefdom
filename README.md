@@ -37,6 +37,7 @@ A code mod for [MeitouClient](https://meitou.kenshi.wiki) that turns one of your
 
 - The **Work** tab lists every kind of work in town, building by building. Give a line its hours: Day and night, Day only, Night only, or Two shifts. Then put residents on it with plus and minus.
 - Workers get the game's own job for their post while on shift, and step away to eat when hungry.
+- A farmer tends their own field first, then any other field in town that needs work, so nobody stands idle while a field waits.
 - Wages are paid at each day change, per shift worked, from your money into the worker's home purse. Unpaid workers stop, and leave after three unpaid days.
 - Residents without a post earn a small outside income instead.
 - A resident on a **shop counter** becomes its merchant. They carry goods from town-stock boxes to the counter, never the town's last meals, and the game's own shoppers buy from it. The takings are yours. You choose what kinds of goods each counter sells.
@@ -54,7 +55,7 @@ A code mod for [MeitouClient](https://meitou.kenshi.wiki) that turns one of your
 
 - Residents wander the town by day and sit about in its public buildings in the evening, so a public building with chairs becomes the town's bar.
 - Residents and guards sleep when tired or wounded, which is the game's own rule for your faction.
-- **Food runners** carry meals from town stock to anyone at work or on guard who is getting hungry.
+- **Food runners** carry meals from town stock to any resident or guard who is getting hungry and has no food on them, the most filling food first.
 - Residents greet your characters as they pass, and grumble when their wages are late or they're hungry.
 - The **Residents** tab keeps the town's news: who came, who was turned away, who died, who took a post.
 

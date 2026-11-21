@@ -2,6 +2,7 @@ using System.Numerics;
 using Meitou.Simulation;
 using Meitou.Simulation.Combat;
 using Meitou.Simulation.Construction;
+using Meitou.Simulation.Player;
 
 namespace Fiefdom;
 
@@ -37,9 +38,15 @@ public sealed partial class FiefdomSystem
     readonly Dictionary<string, long> _lastGreeting = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// When each target was last ordered attacked, by character (not saved), so guards are not ordered again every step.
+    /// The outsider each patrol guard was sent after, by guard (not saved): a guard is ordered once per target, and called off when the target
+    /// is down or gone from the town, so guards do not swing between the chase and their duty.
     /// </summary>
-    readonly Dictionary<CharacterId, long> _ordered = [];
+    readonly Dictionary<CharacterId, CharacterId> _hunts = [];
+
+    /// <summary>
+    /// How far past the town's edge a hunted outsider may run before its guards are called back.
+    /// </summary>
+    const float HuntBeyond = 300;
 
     /// <summary>
     /// Sets a town's attack-on-sight rule for a race.
@@ -84,14 +91,15 @@ public sealed partial class FiefdomSystem
             foreach (var race in state.Seen.Where(p => world.GameHours - p.Value > SeenFor && !state.AttackOnSight.Contains(p.Key)).Select(p => p.Key).ToList())
                 state.Seen.Remove(race);
 
+            if (_hunts.Count > 0) CallOffHunts(world, town);
             if (state.AttackOnSight.Count > 0 && outsiders.Count > 0) Enforce(world, town, state, outsiders);
             if (mine.Count > 0) Greet(world, state, mine);
         }
     }
 
     /// <summary>
-    /// Sends the town's guards (awake, not already fighting) after the nearest outsider of a race the town attacks on sight, with the order the
-    /// player gives; each target at most every ten seconds.
+    /// Sends the town's free patrol guards (awake, not fighting, not already sent after someone) after the nearest outsider in town of a race the
+    /// town attacks on sight, once. Gate guards keep their gates: their own package fights what comes at them without leaving town.
     /// </summary>
     void Enforce(World world, PlayerTown town, TownState state, List<(int Slot, string Race, float D2)> outsiders)
     {
@@ -100,23 +108,44 @@ public sealed partial class FiefdomSystem
             .OrderBy(o => o.D2).Select(o => (int?)o.Slot).FirstOrDefault();
         if (target is not { } slot) return;
         var id = table.IdOf(slot);
-        if (_ordered.TryGetValue(id, out long at) && world.Tick - at < 300) return;
 
         var guards = new List<CharacterId>();
         foreach (var house in Guardhouses(world, town))
         {
-            if (house.Squad is not { } squad) continue;
+            if (house.Gate || house.Squad is not { } squad) continue;
             foreach (var m in squad.Members)
-                if (table.TryResolveNext(m, out int g) && table.Next[g].Alive && table.Cold(g) is { InCombat: false, Medical.Incapacitated: false }) guards.Add(m);
+                if (!_hunts.ContainsKey(m) && table.TryResolveNext(m, out int g) && table.Next[g].Alive
+                    && table.Cold(g) is { InCombat: false, Medical.Incapacitated: false })
+                    guards.Add(m);
         }
         if (guards.Count == 0) return;
-        _ordered[id] = world.Tick;
-        foreach (var old in _ordered.Where(p => world.Tick - p.Value > 3000).Select(p => p.Key).ToList()) _ordered.Remove(old);
+        foreach (var g in guards) _hunts[g] = id;
         world.Commands.Enqueue(new AttackOrder(guards, id) { Tick = world.Tick + 1 });
         string race = SettlerData.RaceName(table.Cold(slot)!.Race!.StringId);
         state.Tell(world.GameHours, $"the guards went after {table.Cold(slot)!.Name} ({race}) on sight");
         Log($"{town.Name}: {guards.Count} guard(s) ordered to attack {table.Cold(slot)!.Name} ({race})");
         _dirty = true;
+    }
+
+    /// <summary>
+    /// Ends the hunts of this town's guards whose target is down, dead, gone or more than <see cref="HuntBeyond"/> past the town's edge: a guard
+    /// still on the order is stopped, so it goes back to its duty once rather than chasing out of town.
+    /// </summary>
+    void CallOffHunts(World world, PlayerTown town)
+    {
+        var table = world.Characters;
+        var centre = Centre(town);
+        float reach = town.Radius + HuntBeyond;
+        var guards = Guardhouses(world, town).Where(h => h.Squad is not null).SelectMany(h => h.Squad!.Members).ToHashSet();
+        foreach (var (guard, target) in _hunts.ToList())
+        {
+            if (!guards.Contains(guard)) continue;
+            bool on = table.TryResolveNext(target, out int t) && table.Next[t].Alive && table.Cold(t) is { Medical.Incapacitated: false }
+                && Vector2.Distance(new(table.Next[t].Position.X, table.Next[t].Position.Z), centre) <= reach;
+            if (on) continue;
+            _hunts.Remove(guard);
+            if (table.TryResolveNext(guard, out int g) && PlayerOrders.Holds(world, g)) world.Commands.Enqueue(new StopCommand([guard]) { Tick = world.Tick + 1 });
+        }
     }
 
     /// <summary>

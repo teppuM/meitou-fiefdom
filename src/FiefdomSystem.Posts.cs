@@ -35,7 +35,7 @@ public enum PostKind : byte
     /// <summary>A guard's bed in a guardhouse (the guard squad's own package: patrols or the gates).</summary>
     Guard,
 
-    /// <summary>A food runner (the mod's job: carries meals from town stock to hungry workers and guards).</summary>
+    /// <summary>A food runner (the mod's job: carries meals from town stock to hungry residents and guards).</summary>
     Runner,
 }
 
@@ -489,6 +489,8 @@ public sealed partial class FiefdomSystem
 
         var table = world.Characters;
         double now = world.GameHours;
+        // The farm fields of each town, read once per step for the farmers' rounds.
+        Dictionary<int, List<string>>? fields = null;
         foreach (var (id, holder) in _holders.ToList())
         {
             var c = world.LastingIds.Find(new LastingId(id));
@@ -538,8 +540,45 @@ public sealed partial class FiefdomSystem
                 TakeJob(world, c, cold, holder.Site);
                 Log($"{r!.Name}: off shift ({Names.Of(holder.Shift)}), jobs {cold.Jobs.Count}");
             }
+            if (post.Kind == PostKind.Machine && IsFarm(world, holder.Site))
+            {
+                fields ??= [];
+                if (!fields.TryGetValue(town.Number, out var all)) fields[town.Number] = all = Fields(world, town.Number);
+                KeepFarmRound(world, c, cold, all, holder.Site, on);
+            }
         }
     }
+
+    #region Farm rounds
+
+    /// <summary>
+    /// Whether a post's furniture is a farm field.
+    /// </summary>
+    static bool IsFarm(World world, string site) => world.Machines.Find(site)?.Farm is not null;
+
+    /// <summary>
+    /// The town's farm fields, in the town's post order.
+    /// </summary>
+    List<string> Fields(World world, int town) =>
+        [.. WorkPosts(world, town).Where(p => p.Kind == PostKind.Machine && IsFarm(world, p.Site.Id)).Select(p => p.Site.Id)];
+
+    /// <summary>
+    /// A farmer tends their own field first and, while on shift, every other field in town after it, as a player's farmer with several farm
+    /// jobs does: the job list runs the first job that has work, so a farmer whose field has nothing to plant or pick moves on to the next one
+    /// instead of standing idle. Off shift the other fields' jobs go with their own.
+    /// </summary>
+    void KeepFarmRound(World world, CharacterId c, CharacterCold cold, List<string> fields, string own, bool on)
+    {
+        foreach (string field in fields)
+        {
+            if (field == own) continue;
+            bool has = cold.Jobs.Any(j => j.Site == field);
+            if (on && !has) _production!.Inputs(world, [new AddJob([c], TaskType.OperateMachinery, field) { Tick = world.Tick }]);
+            else if (!on && has) TakeJob(world, c, cold, field);
+        }
+    }
+
+    #endregion
 
     /// <summary>
     /// Takes a post's job off every resident who no longer works that post (taken off it, moved to another, or the line's hours changed), so no
@@ -556,7 +595,10 @@ public sealed partial class FiefdomSystem
             if (c.IsNone || !table.TryResolveNext(c, out int slot) || table.Cold(slot) is not { IsPlayer: true, Jobs.Count: > 0 } cold) continue;
             posts ??= LiveTowns(world).SelectMany(t => WorkPosts(world, t.Town.Number)).Select(p => p.Site.Id).ToHashSet(StringComparer.Ordinal);
             string? mine = _holders.TryGetValue(id, out var h) ? h.Site : null;
-            foreach (var site in cold.Jobs.Select(j => j.Site).Where(s => s is not null && s != mine && posts.Contains(s)).Distinct().ToList())
+            // A farmer's round of the other fields (KeepFarmRound) is theirs while they hold a field.
+            bool farmer = mine is not null && IsFarm(world, mine);
+            foreach (var site in cold.Jobs.Select(j => j.Site)
+                         .Where(s => s is not null && s != mine && posts.Contains(s) && !(farmer && IsFarm(world, s!))).Distinct().ToList())
             {
                 TakeJob(world, c, cold, site!);
                 Log($"{r.Name}: dropped the job at {site} (no longer their post)");
