@@ -5,7 +5,11 @@ using Meitou.Data.Fcs;
 // Records keep their string ids for ever: add new ones with the next number, never renumber.
 string path = args.Length > 0 ? args[0] : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../out/Fiefdom/Fiefdom.mod"));
 const string File = "Fiefdom.mod";
-var mod = new FcsFile { FileType = FcsFileType.V17, Version = 1, Author = "thenamejame", Description = "Fiefdom's own game records: the townspeople's daily round." };
+// The header's description is the Steam Workshop page's (the construction set uploads it from here): workshop\workshop-description.txt.
+string descriptionFile = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../workshop/workshop-description.txt"));
+string description = System.IO.File.Exists(descriptionFile) ? System.IO.File.ReadAllText(descriptionFile).Replace("\r\n", "\n").TrimEnd()
+    : "Fiefdom's own game records: the townspeople's daily round.";
+var mod = new FcsFile { FileType = FcsFileType.V17, Version = 1, Author = "thenamejame", Description = description };
 
 // 1: the town wander goal (task 37, Wandering town): walks between the town's public buildings.
 var wander = Record(1, FcsRecordType.AiTask, "Fiefdom: wander the town");
