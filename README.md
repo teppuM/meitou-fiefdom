@@ -89,6 +89,8 @@ On the Settings screen's Mods page:
 1. Download the zip from the [Releases](https://github.com/teppuM/meitou-fiefdom/releases) page and unzip it into Kenshi's `mods` folder, so that you have `Kenshi\mods\Fiefdom\Fiefdom.dll`, `Fiefdom.mod` and `meitou.json`.
 2. Turn it on in the MeitouClient launcher's mod list.
 
+Or subscribe on the [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3843652260) and turn it on the same way.
+
 It needs MeitouClient 0.22.2 from the nightly of 2026-11-21 on. That nightly changed how mods give characters jobs, so older builds refuse to load this mod.
 
 ## Known limits
