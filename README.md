@@ -100,7 +100,7 @@ It needs MeitouClient 0.22.2 from the nightly of 2026-11-21 on. That nightly cha
 
 ## Feedback and suggestions
 
-- **Bugs and feedback:** please report them on the [MeitouClient Discord](https://discord.gg/DVAHH2n9DR) or as a [GitHub issue](https://github.com/teppuM/meitou-fiefdom/issues).
+- **Bugs and feedback:** please report them on the [MeitouClient Discord](https://discord.gg/DVAHH2n9DR) in the [Fiefdom thread](https://discord.com/channels/1560771083626487908/1573758617037832253/1573758617037832253) or as a [GitHub issue](https://github.com/teppuM/meitou-fiefdom/issues).
 - **Suggestions** are welcome, but not guaranteed to be accepted. Everyone has the right to make their own version with blackjack and hookers if they want instead.
 - **DMs are welcome.** Don't be afraid to [message me on Discord](https://discord.com/users/134194201385500672) at any time about it.
 
