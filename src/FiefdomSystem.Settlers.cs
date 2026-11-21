@@ -888,6 +888,10 @@ public sealed partial class FiefdomSystem
             if (!template.WorldState.All(w => IWorldStates.Passes(_population.States, _data.Db, w.Id, w.V0))) continue;
             int faction = _data.SpawnFactionOf(template);
             if (faction < 0 || faction == player || _aggro.Relations.IsHostile(faction, player) || _aggro.Relations.AtWar(faction, player)) continue;
+            // Bandit factions (the game's own faction type, the one it treats as lawless) send nobody, whatever their relation says: Skin Bandits,
+            // Skeleton Bandits and Reavers start at 0 and are hostile by what they do. The hungry wanderers of the wastes are the exception.
+            var data = _data.Factions[faction];
+            if (data.FundamentalType == Meitou.Data.Gameplay.FundamentalType.Bandit && !DesperateIds.Contains(data.Id)) continue;
             // A faction that dislikes the player either way (a starving bandit mob is not hostile by the game's line, but robs and fights, and
             // the guards go for it): visitors keep their own faction in town, so they are left out; settlers come as Drifters, people who have
             // left their old band to settle, or are left out when the game has no Drifters at peace with the player.
@@ -908,6 +912,11 @@ public sealed partial class FiefdomSystem
     /// The game's Drifters faction, which settlers from a faction unfriendly to the player come as.
     /// </summary>
     const string DriftersId = "51707-rebirth.mod";
+
+    /// <summary>
+    /// The bandit factions whose people may still come to settle (as Drifters): Starving Bandits and Vagrants, hungry people more than raiders.
+    /// </summary>
+    static readonly HashSet<string> DesperateIds = new(StringComparer.Ordinal) { "1305-gamedata.base", "96156-rebirth.mod" };
 
     /// <summary>
     /// The Drifters' faction index, when the game has it and it is at peace with the player both ways; null otherwise.
