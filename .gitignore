@@ -12,3 +12,5 @@ tools/town_sim.py
 __pycache__/
 art/*.png
 art/*.jpg
+!art/fiefdom-icon.png
+!art/fiefdom-icon-beta.png

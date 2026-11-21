@@ -1,5 +1,7 @@
 # Fiefdom
 
+<img src="art/fiefdom-icon-beta.png" alt="Fiefdom" width="320">
+
 A code mod for [MeitouClient](https://meitou.kenshi.wiki) that turns one of your outposts into a living town. Settlers arrive and ask to live there, residents work its machines and shop counters for wages, guards patrol and patch up the wounded, and visitors come to shop. The original Kenshi ignores it.
 
 > **This is a beta build, and it will be broken in places.** Fiefdom is going to be built on and changed heavily: features will be added, reworked or pulled out, and numbers will move. Expect an imperfect experience, back up any save you care about, and expect a later version to change how your town works. It also runs on MeitouClient's newest nightlies, which can stop it loading until an update comes out. Bug reports are very much wanted: please post them on the [MeitouClient Discord](https://discord.gg/DVAHH2n9DR) or as an [issue here on GitHub](https://github.com/teppuM/meitou-fiefdom/issues), with what happened, your MeitouClient version and your `log.txt` (and a save if you can share one).
