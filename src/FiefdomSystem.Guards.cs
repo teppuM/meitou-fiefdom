@@ -167,25 +167,20 @@ public sealed partial class FiefdomSystem
     }
 
     /// <summary>
-    /// The guard squad living in a guardhouse, made when it has none: led by the player (it has a squad tab and takes orders, which come first),
-    /// run by the AI on the duty's guard package between orders, outside the faction's size count, with its own purse, at home there. Null when
-    /// the player already has the most squads the game allows, or a system is missing.
+    /// The guard squad living in a guardhouse, made when it has none: not led by the player, as the residents' squads are (no squad tab, not
+    /// selectable, so guards are no free recruits), run by the AI on the duty's guard package, outside the faction's size count and the squad
+    /// limit, with its own purse, at home there. Null when a system is missing.
     /// </summary>
     Squad? GuardSquad(World world, PlayerTown town, Guardhouse house)
     {
         if (house.Squad is { } known) return known;
         if (_ai is null || _player is null) return null;
-        if (SquadManagement.LedSquads(world).Count >= _data.Bodies.Constants.MaxSquads)
-        {
-            world.Post("Maximum number of squads reached: the guards need a squad of their own.");
-            return null;
-        }
 
         var squad = SquadManagement.NewSquad(world, _data.Db, house.Site.Position, "Fiefdom");
         squad.Name = $"{town.Name} guards";
         squad.ModTags[ModId] = GuardTag + house.Site.Id;
         string package = house.Gate ? GatePackage : PatrolPackage;
-        List<SimCommand> ai = [new SetSquadAutonomy(squad.Id, true, Independent: false, Owner: ModId) { Tick = world.Tick }];
+        List<SimCommand> ai = [new SetSquadAutonomy(squad.Id, true, Independent: true, Owner: ModId) { Tick = world.Tick }];
         if (_data.Db.Find(package) is not null) ai.Add(new ChangeAi(squad.Id, package) { Tick = world.Tick });
         else Log($"the guards' package {package} is not in the game data; guards get none");
         ai.Add(new SetSquadHome(squad.Id, house.Site.Id) { Tick = world.Tick });

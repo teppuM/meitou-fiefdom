@@ -205,7 +205,10 @@ public sealed partial class FiefdomSystem
                 }
                 if (Vector2.Distance(new(at.X, at.Z), new(site.Position.X, site.Position.Z)) > Reach) continue;
                 int want = round.To.Count - CarriedFood(id, inv), taken = 0;
-                foreach (var item in stock.Items.Where(i => i.IsFood).ToList())
+                // The most filling meals first (an item's full charges are its nutrition, as the eating rule scores it), so cooked food goes out
+                // before raw produce rather than whatever the box lists first.
+                var meals = stock.Items.Where(i => i.IsFood).OrderByDescending(i => i.MaxCharges).ToList();
+                foreach (var item in meals)
                 {
                     if (taken >= want) break;
                     int units = Math.Min(item.Quantity, want - taken);

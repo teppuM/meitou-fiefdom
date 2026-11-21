@@ -43,7 +43,7 @@ A code mod for [MeitouClient](https://meitou.kenshi.wiki) that turns one of your
 
 ### Guards
 
-- Set a house's **Lives here** to Guards and it becomes a guardhouse. Its guards are one squad that you can select and give orders. Between orders they do their duty:
+- Set a house's **Lives here** to Guards and it becomes a guardhouse. Its guards are one squad that, like your residents, you cannot select or command. They do their duty on their own:
   - **Patrol** walks the whole town by day.
   - **Gates** mans the gates you built in the town.
 - Guards fight anyone hostile without leaving town.

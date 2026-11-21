@@ -18,6 +18,11 @@ namespace Fiefdom;
 public sealed record SetTown(int Town, bool On) : SimCommand;
 
 /// <summary>
+/// For testing: sets the player's faction's relation with the factions of this name, both ways (-100 to 100).
+/// </summary>
+public sealed record SetFactionRelation(string Faction, float Value) : SimCommand;
+
+/// <summary>
 /// Sets or clears one rule of the player's building <paramref name="Site"/> (its <see cref="BuildSite.Id"/>).
 /// </summary>
 public sealed record SetRule(string Site, BuildingRule Rule, bool On) : SimCommand;
@@ -192,8 +197,30 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
                 case SettlerCommand s:
                     Apply(world, s);
                     break;
+                case SetFactionRelation r:
+                    Apply(world, r);
+                    break;
             }
         }
+    }
+
+    /// <summary>
+    /// For testing: sets the relation between the player's faction and every faction whose name is the command's (ignoring case), both ways,
+    /// through the debug menu's own relation command. Logs what it did, or that no faction has the name.
+    /// </summary>
+    void Apply(World world, SetFactionRelation command)
+    {
+        if (_aggro is null) return;
+        var relations = _aggro.Relations;
+        int player = world.Player.Faction;
+        int found = 0;
+        for (int f = 0; f < relations.Count; f++)
+        {
+            if (f == player || !string.Equals(relations.Factions[f].Name, command.Faction, StringComparison.OrdinalIgnoreCase)) continue;
+            world.Commands.Enqueue(new DebugSetRelation(player, f, command.Value) { Tick = world.Tick + 1 });
+            found++;
+        }
+        Log(found > 0 ? $"relation with {command.Faction} set to {command.Value} (testing, {found} faction(s))" : $"no faction named {command.Faction} (testing)");
     }
 
     /// <summary>

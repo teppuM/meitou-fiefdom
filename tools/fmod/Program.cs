@@ -56,6 +56,8 @@ var patrol = Record(4, FcsRecordType.AiPackage, "Fiefdom patrol guards");
 patrol.Bools["clears existing jobs"] = false;
 patrol.Ints["signal func"] = 0;
 patrol.Ints["unloaded func"] = 5;
+// Leader and members get the same list, so every guard patrols on their own (Patrolling town draws each walker's own point) and goes to bed;
+// a members' list without the patrol left everyone but the leader standing idle.
 patrol.References["Leader AI Goals"] =
 [
     new("957-gamedata.base", 0, 100, 0),
@@ -66,12 +68,7 @@ patrol.References["Leader AI Goals"] =
     new("959-gamedata.base", 0, 0, 0),
     new("12607-gamedata.base", 0, 24, 0),
 ];
-patrol.References["Squad AI Goals"] =
-[
-    new("957-gamedata.base", 0, 100, 0),
-    new("1360-gamedata.base", 0, 100, 0),
-    new("2826-gamedata.base", 0, 100, 0),
-];
+patrol.References["Squad AI Goals"] = [.. patrol.References["Leader AI Goals"]];
 patrol.References["Slave AI Goals"] = [new("3397-gamedata.base", 0, 24, 0)];
 
 mod.Records.Add(wander);

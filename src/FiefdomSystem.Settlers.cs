@@ -336,14 +336,15 @@ public sealed partial class FiefdomSystem
                 var plans = new List<Meitou.Simulation.Construction.PlannedBuilding>();
                 // Two beds a row either side of the middle, rows 60 apart: wider rows put the outer beds outside a small shack's walls, where
                 // the builder takes the order and does nothing.
-                foreach (var site in Homes(world, town).Select(h => h.Site).Concat(Guardhouses(world, town).Select(g => g.Site)))
+                // Homes only: guardhouses have their own row ("plan two beds in each guardhouse").
+                foreach (var site in Homes(world, town).Select(h => h.Site))
                     for (int i = 0; i < Math.Clamp(plan.Count, 1, 8); i++)
                     {
                         var at = site.Position + new Vector3(-20 + 40 * (i % 2), 0, -30 + 60 * (i / 2));
                         plans.Add(new Meitou.Simulation.Construction.PlannedBuilding(plan.Bed, at, Quaternion.Identity, 0, site.Id));
                     }
                 _construction.Inputs(world, [new Meitou.Simulation.Construction.PlaceBuildings(plans) { Tick = world.Tick }]);
-                Log($"{town.Name}: planned {plans.Count} beds in its homes and guardhouses (testing)");
+                Log($"{town.Name}: planned {plans.Count} beds in its homes (testing)");
                 break;
         }
     }
@@ -656,7 +657,11 @@ public sealed partial class FiefdomSystem
         var verdict = Steward.Judge(personality, applicants, Rng.Hash(world.Seed, (ulong)group.Serial, RollPurpose, 0x57E7));
         world.Bark(world.Characters.IdOf(steward), verdict.Says);
         if (verdict.Admit) Admit(world, town, state, group, p, squad, members, $"{verdict.Reason}, said {cold.Name}", verdict.Bribe, steward);
-        else Release(world, group, state, $"turned away by {cold.Name}: {verdict.Reason}");
+        else
+        {
+            Release(world, group, state, $"turned away by {cold.Name}: {verdict.Reason}");
+            world.Post($"{cold.Name} turned settlers away from {town.Name}: {verdict.Reason}.");
+        }
     }
 
     /// <summary>
@@ -755,6 +760,7 @@ public sealed partial class FiefdomSystem
             if (!table.TryResolveNext(id, out int slot) || table.Cold(slot) is not { } cold) continue;
             StopWalk(world, slot);
             if (!_population!.JoinPlayerSquad(world, id, homeSquad.Id)) continue;
+            GiveOwnName(world, id, cold);
 
             home.Members++;
             homeSquad.Money += share;
@@ -771,7 +777,22 @@ public sealed partial class FiefdomSystem
         state.NextArrival = double.NaN;
         string who = names.Count == 1 ? names[0] : $"{names.Count} settlers";
         state.Tell(now, names.Count == 0 ? "a group was accepted but no one could move in" : $"{who} ({string.Join(", ", races)}) moved in: {reason}");
+        if (steward is not null && names.Count > 0)
+            world.Post($"{who} ({string.Join(", ", races)}) moved into {town.Name}: {reason}. The Town window's news has the details.");
         Log($"{town.Name}: {names.Count} moved in ({string.Join(", ", names)}): {reason}");
+    }
+
+    /// <summary>
+    /// A settler the game made without a name of their own (named after their record, as "Shek Fighter") takes a personal name from the game's own
+    /// name lists on moving in, rolled from the world seed and their lasting id so a reload gives the same one. A named character keeps theirs.
+    /// </summary>
+    void GiveOwnName(World world, CharacterId id, CharacterCold cold)
+    {
+        if (_data.Db.Find(cold.RecordId) is not { } record || record.GetBool("named") || cold.Name != record.Name) return;
+        if (_population!.Data.Appearances is not { } source) return;
+
+        ulong roll = Rng.Hash(world.Seed, world.LastingIds.GetOrGive(id).Value, RollPurpose, 0x4A3E);
+        if (source.RandomName(cold.Appearance?.Female ?? false, roll) is { Length: > 0 } name) cold.Name = name;
     }
 
     /// <summary>
@@ -1017,11 +1038,34 @@ public sealed partial class FiefdomSystem
                 : tag.StartsWith(GuardTag, StringComparison.Ordinal)
                     ? ((_rules.GetValueOrDefault(tag[GuardTag.Length..]) & BuildingRule.GateDuty) != 0 ? GatePackage : PatrolPackage)
                 : null;
+            // Guard squads made by earlier versions were led by the player; guards are not the player's to command, as residents are not.
+            if (want is not null && !squad.Independent)
+            {
+                commands.Add(new SetSquadAutonomy(squad.Id, true, Independent: true, Owner: ModId) { Tick = world.Tick });
+                Log($"{squad.Name}: no longer led by the player");
+            }
+            if (tag.StartsWith(GuardTag, StringComparison.Ordinal)) KeepGuardsOffIdleJobs(world, squad);
             if (want is null || current.Id == want || _data.Db.Find(want) is null) continue;
             commands.Add(new ChangeAi(squad.Id, want) { Tick = world.Tick });
             Log($"{squad.Name}: package {current.Id} changed to {want}");
         }
         if (commands.Count > 0) _ai.Inputs(world, commands);
+    }
+
+    /// <summary>
+    /// Turns the jobs switch off for a guard squad's members. The faction-wide squad AI options (Sit when idle, Sleep when injured, Ditch items)
+    /// give anyone of the player's faction with the switch on and no job of their own an idle job, and jobs come before the package, so guards
+    /// sat in the town's chairs instead of patrolling. Guards hold no posts; a guard with a job of the mod's (fetching a first aid kit, which
+    /// turns the switch on) keeps it until that job is gone. Their package still beds them down at night.
+    /// </summary>
+    static void KeepGuardsOffIdleJobs(World world, Squad squad)
+    {
+        var table = world.Characters;
+        foreach (var id in squad.Members)
+        {
+            if (!table.TryResolveNext(id, out int slot) || table.Cold(slot) is not { } cold) continue;
+            if ((cold.Orders & CharacterOrders.Jobs) != 0 && cold.Jobs.Count == 0) cold.Orders &= ~CharacterOrders.Jobs;
+        }
     }
 
     /// <summary>

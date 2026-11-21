@@ -492,7 +492,7 @@ sealed class FiefdomUi : IUiExtension
         sheet.Line("set-next", town.NextGroup);
         sheet.Line("set-steward", $"Steward: {town.Steward}");
         sheet.Line("set-steward-note", town.StewardNote, note: true);
-        if (!town.StewardId.IsNone) sheet.Buttons(("set-steward-clear", "No steward: ask me about every group", "steward-clear", false));
+        if (!town.StewardId.IsNone) sheet.Buttons(("set-steward-clear", "Remove steward (then you answer every group)", "steward-clear", false));
         sheet.Line("set-pull", $"Pull: {town.Pull} of 100");
         sheet.Line("set-pull-why", $"   {string.Join(", ", town.PullReasons)}", note: true);
         sheet.Buttons(("set-cap-down", "Cap -5", "cap:-5", false), ("set-cap", $"Cap: {town.Cap}", "cap:0", false),
@@ -721,7 +721,7 @@ sealed class FiefdomUi : IUiExtension
             sheet.Line("people-duty-how", line.Gate
                 ? "One mans a gate, the rest stand guard; they fight in town and heal each other."
                 : "They patrol, man turrets, fight in town and heal each other; bed at night.", note: true);
-            sheet.Line("people-orders", "Their own squad tab: select them to give orders, which come first.", note: true);
+            sheet.Line("people-orders", "Guards are not yours to command: like residents, they keep to their duty on their own.", note: true);
         }
         else
         {

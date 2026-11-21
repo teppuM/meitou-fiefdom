@@ -37,6 +37,7 @@ public sealed class FiefdomMod : IMod
         context.AddDebugCommand("Fiefdom: bring visitors now (testing)", VisitorsNow);
         context.AddDebugCommand("Fiefdom: put first aid kits in town stock (testing)", KitsNow, hasField: true);
         context.AddDebugCommand("Fiefdom: log what townspeople are doing", MindsNow);
+        context.AddDebugCommand("Fiefdom: set relations with a faction (testing)", RelationNow, hasField: true);
         context.Log($"{FiefdomSystem.RuleRecords.Count} buildings can take rules, {FiefdomSystem.StorageRecords.Count} are storage; {settlers}");
     }
 
@@ -111,6 +112,19 @@ public sealed class FiefdomMod : IMod
         int count = int.TryParse(context.Field, out int n) ? n : 3;
         foreach (int town in FiefdomSystem.View.Towns) context.Enqueue(new FillTownStock(town, "209-gamedata.base", count) { Tick = context.Tick });
         return $"Put up to {count} Basic First Aid Kits in town stock.";
+    }
+
+    /// <summary>
+    /// The F10 row for testing: sets the player's relation with a faction, both ways. The field: "name=value", "name" (100), or empty for the
+    /// United Cities at 100 (allied).
+    /// </summary>
+    static string RelationNow(DebugCommandContext context)
+    {
+        string field = context.Field.Trim();
+        string name = field.Length == 0 ? "United Cities" : field.Split('=')[0].Trim();
+        float value = field.Contains('=') && float.TryParse(field.Split('=')[1], out float v) ? Math.Clamp(v, -100, 100) : 100;
+        context.Enqueue(new SetFactionRelation(name, value) { Tick = context.Tick });
+        return $"Relation with {name} set to {value}.";
     }
 
     /// <summary>

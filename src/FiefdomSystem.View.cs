@@ -367,10 +367,12 @@ public sealed partial class FiefdomSystem
         foreach (var id in members)
             if (world.Characters.TryResolveNext(id, out int slot) && world.Characters.Cold(slot)?.Race is { } race)
                 races.Add(SettlerData.RaceName(race.StringId));
-        string text = $"{members.Count} {(members.Count == 1 ? "person" : "people")} ({string.Join(", ", races)}), {squad.Money} cats, ask to stay";
+        // Their money is their own: on moving in it goes to their home's purse, never from the player.
+        string text = $"{members.Count} {(members.Count == 1 ? "person" : "people")} ({string.Join(", ", races)}) {(members.Count == 1 ? "asks" : "ask")} to live here";
         if (a.RuleBroken is { } broken) text += $" ({broken})";
-        if (a.Armed) text += ", armed";
-        return new GroupLine(g.Serial, text + ".", !g.Accepted, a.HardRefusal);
+        text += squad.Money > 0 ? $". They bring {squad.Money:N0} cats of their own into their home's purse" : ". They bring no money";
+        text += a.Armed ? " and carry weapons." : " and come unarmed.";
+        return new GroupLine(g.Serial, text, !g.Accepted, a.HardRefusal);
     }
 
     /// <summary>
