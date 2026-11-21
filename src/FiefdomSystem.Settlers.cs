@@ -888,15 +888,40 @@ public sealed partial class FiefdomSystem
             if (!template.WorldState.All(w => IWorldStates.Passes(_population.States, _data.Db, w.Id, w.V0))) continue;
             int faction = _data.SpawnFactionOf(template);
             if (faction < 0 || faction == player || _aggro.Relations.IsHostile(faction, player) || _aggro.Relations.AtWar(faction, player)) continue;
-            // Visitors keep their own faction in town, so they must be at least neutral toward the player both ways: a starving bandit mob is
-            // not hostile by the game's line but robs and fights once inside.
-            if (visiting && (_aggro.Relations.Get(faction, player) < 0 || _aggro.Relations.Get(player, faction) < 0)) continue;
+            // A faction that dislikes the player either way (a starving bandit mob is not hostile by the game's line, but robs and fights, and
+            // the guards go for it): visitors keep their own faction in town, so they are left out; settlers come as Drifters, people who have
+            // left their old band to settle, or are left out when the game has no Drifters at peace with the player.
+            if (_aggro.Relations.Get(faction, player) < 0 || _aggro.Relations.Get(player, faction) < 0)
+            {
+                if (visiting || DriftersFaction(player) is not { } drifters) continue;
+                faction = drifters;
+            }
             if (t.Races.Count > 0 && t.Races.All(state.BlockedRaces.Contains)) continue;
             if (!state.AllowHarmed && t.Unprotected.Count > 0) continue;
             if (t.MaxSize > beds) continue;
             list.Add((t, faction));
         }
         return list;
+    }
+
+    /// <summary>
+    /// The game's Drifters faction, which settlers from a faction unfriendly to the player come as.
+    /// </summary>
+    const string DriftersId = "51707-rebirth.mod";
+
+    /// <summary>
+    /// The Drifters' faction index, when the game has it and it is at peace with the player both ways; null otherwise.
+    /// </summary>
+    int? DriftersFaction(int player)
+    {
+        if (_aggro is null) return null;
+        for (int i = 0; i < _data.Factions.Count; i++)
+        {
+            if (_data.Factions[i].Id != DriftersId) continue;
+            bool peace = _aggro.Relations.Get(i, player) >= 0 && _aggro.Relations.Get(player, i) >= 0;
+            return peace ? i : null;
+        }
+        return null;
     }
 
     /// <summary>
