@@ -174,6 +174,16 @@ public sealed partial class FiefdomSystem
     const float SpawnNear = 7000, SpawnFar = 10000;
 
     /// <summary>
+    /// Where a group brought by a testing row is made instead: just beyond the town's edge, so a test does not wait for a walk of kilometres.
+    /// </summary>
+    const float HurryNear = 1200, HurryFar = 2000;
+
+    /// <summary>
+    /// The towns whose next group or visitors a testing row asked for now (by key, not saved): that group is made close by.
+    /// </summary>
+    readonly HashSet<string> _hurry = new(StringComparer.Ordinal);
+
+    /// <summary>
     /// The mod's random purpose (set when the mod starts).
     /// </summary>
     public static RngPurpose RollPurpose { get; set; }
@@ -302,8 +312,10 @@ public sealed partial class FiefdomSystem
                 Appoint(world, town, state, appoint.Character, now);
                 break;
             case BringSettlers:
+                ReplaceTravelling(world, state, visiting: false);
                 state.NextArrival = now;
-                Log($"{town.Name}: next group due now (testing)");
+                _hurry.Add(state.Key);
+                Log($"{town.Name}: next group due now, made close by (testing)");
                 break;
             case TakePosts:
                 TakeOpenPosts(world, town, state);
@@ -312,7 +324,9 @@ public sealed partial class FiefdomSystem
                 LogTownspeople(world);
                 break;
             case BringVisitors:
+                ReplaceTravelling(world, state, visiting: true);
                 state.NextVisit = world.GameHours;
+                _hurry.Add(state.Key);
                 Log($"{town.Name}: visitors due now (testing){(town.Public ? "" : "; the town is not open to the public")}");
                 break;
             case PlanGuardBeds when _construction is not null:
@@ -796,6 +810,16 @@ public sealed partial class FiefdomSystem
     }
 
     /// <summary>
+    /// For the testing rows: lets go a group of the town still on its way (it goes back to wandering), so the row's new group, made close by,
+    /// is not held up behind one kilometres out.
+    /// </summary>
+    void ReplaceTravelling(World world, TownState state, bool visiting)
+    {
+        foreach (var group in _groups.Values.Where(g => g.Town == state.Key && g.Visiting == visiting && g.Stage == GroupStage.Travelling).ToList())
+            Release(world, group, state, "was sent on its way for a test");
+    }
+
+    /// <summary>
     /// Lets the group go on its way: its platoon is the population's again, as any wandering group.
     /// </summary>
     void Release(World world, SettlerGroup group, TownState state, string reason)
@@ -961,8 +985,10 @@ public sealed partial class FiefdomSystem
 
         var centre = Centre(town);
         long money = (100 + Rng.Int(Rng.Hash(world.Seed, (ulong)serial, RollPurpose, 0x3011), 300)) * (long)chosen.Template.MinSize;
-        int id = _population!.SpawnPlatoon(world, chosen.Faction, chosen.Template.TemplateId, NearestSite(centre), centre, town.Radius + SpawnNear,
-            town.Radius + SpawnFar, money);
+        bool hurry = _hurry.Remove(state.Key);
+        float near = hurry ? HurryNear : SpawnNear, far = hurry ? HurryFar : SpawnFar;
+        int id = _population!.SpawnPlatoon(world, chosen.Faction, chosen.Template.TemplateId, NearestSite(centre), centre, town.Radius + near,
+            town.Radius + far, money);
         if (id < 0 || world.Platoons.Find(id) is not { } p)
         {
             Log($"{town.Name}: no place found for {chosen.Template.Name}");
