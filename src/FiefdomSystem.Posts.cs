@@ -430,7 +430,7 @@ public sealed partial class FiefdomSystem
     void PlanInHomes(World world, PlayerTown town, PlanFurniture plan)
     {
         if (_construction is null || _data.Db.Find(plan.Record) is null) return;
-        var plans = Homes(world, town).Select(h => new PlannedBuilding(plan.Record, h.Site.Position + plan.Offset, Quaternion.Identity, 0, h.Site.Id)).ToList();
+        var plans = Homes(world, town).Select(h => Plans.Make(plan.Record, h.Site.Position + plan.Offset, Quaternion.Identity, 0, h.Site.Id)).ToList();
         _construction.Inputs(world, [new PlaceBuildings(plans) { Tick = world.Tick }]);
         Log($"{town.Name}: planned {plans.Count} {plan.Record} in its homes at offset {plan.Offset} (testing)");
     }

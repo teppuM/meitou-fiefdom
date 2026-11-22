@@ -333,7 +333,7 @@ public sealed partial class FiefdomSystem
                 var beds = new List<Meitou.Simulation.Construction.PlannedBuilding>();
                 foreach (var house in Guardhouses(world, town))
                     foreach (var offset in new[] { Vector3.Zero, new Vector3(0, 0, -35) })
-                        beds.Add(new Meitou.Simulation.Construction.PlannedBuilding("3460-otto.mod", house.Site.Position + offset, Quaternion.Identity, 0, house.Site.Id));
+                        beds.Add(Plans.Make("3460-otto.mod", house.Site.Position + offset, Quaternion.Identity, 0, house.Site.Id));
                 _construction.Inputs(world, [new Meitou.Simulation.Construction.PlaceBuildings(beds) { Tick = world.Tick }]);
                 Log($"{town.Name}: planned {beds.Count} beds in its guardhouses (testing)");
                 break;
@@ -355,7 +355,7 @@ public sealed partial class FiefdomSystem
                     for (int i = 0; i < Math.Clamp(plan.Count, 1, 8); i++)
                     {
                         var at = site.Position + new Vector3(-20 + 40 * (i % 2), 0, -30 + 60 * (i / 2));
-                        plans.Add(new Meitou.Simulation.Construction.PlannedBuilding(plan.Bed, at, Quaternion.Identity, 0, site.Id));
+                        plans.Add(Plans.Make(plan.Bed, at, Quaternion.Identity, 0, site.Id));
                     }
                 _construction.Inputs(world, [new Meitou.Simulation.Construction.PlaceBuildings(plans) { Tick = world.Tick }]);
                 Log($"{town.Name}: planned {plans.Count} beds in its homes (testing)");
