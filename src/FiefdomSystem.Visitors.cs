@@ -43,8 +43,9 @@ public sealed partial class FiefdomSystem
     }
 
     /// <summary>
-    /// The visitors buy at the town's counters: each member who can pay buys one item, food first, at the item's own value from the group's
-    /// purse into the player's money, as a sale at a player's counter pays. The news says what they spent.
+    /// The visitors buy at the town's counters: each member buys one item, the first on the counters (food first) the group's purse can pay
+    /// for and the member can carry, at the item's own value from the group's purse into the player's money, as a sale at a player's counter
+    /// pays. The news says what they spent.
     /// </summary>
     void VisitorsBuy(World world, PlayerTown town, TownState state, SettlerGroup group, Squad squad)
     {
@@ -55,13 +56,14 @@ public sealed partial class FiefdomSystem
         foreach (var m in squad.Members)
         {
             if (!table.TryResolveNext(m, out int slot) || !table.Next[slot].Alive || table.Cold(slot) is not { Medical.Incapacitated: false, Inventory: { } inv }) continue;
-            var choice = counters.SelectMany(c => c.Stock.Items.Select(i => (c.Stock, Item: i)))
-                .OrderByDescending(p => p.Item.IsFood).ThenBy(p => p.Item.Record, StringComparer.Ordinal).FirstOrDefault();
-            if (choice.Item is not { } item) break;
-            long price = Math.Max(1, _data.Db.Find(item.Record)?.GetInt("value") ?? 1);
-            if (squad.Money < price) continue;
+            var goods = counters.SelectMany(c => c.Stock.Items.Select(i => (c.Stock, Item: i)))
+                .OrderByDescending(p => p.Item.IsFood).ThenBy(p => p.Item.Record, StringComparer.Ordinal).ToList();
+            if (goods.Count == 0) break;
+            if (Affordable(goods, squad.Money, inv) is not { } choice) continue;
+
+            var item = choice.Item;
+            long price = PriceOf(item);
             var one = item.Quantity == 1 ? item : item.WithQuantity(1);
-            if (!inv.HasRoomIn(Carried, one)) continue;
             if (one == item) choice.Stock.Remove(item);
             else item.Quantity -= 1;
             inv.AddTo(Carried, one);
@@ -76,6 +78,29 @@ public sealed partial class FiefdomSystem
         state.Tell(world.GameHours, bought > 0 ? $"visitors ({name}) bought {bought} item{(bought > 1 ? "s" : "")} for {spent} cats" : $"visitors ({name}) found nothing they could buy");
         Log($"group {group.Serial}: bought {bought} for {spent}; purse now {squad.Money}, player has {world.Player.Money}");
     }
+
+    /// <summary>
+    /// The first of <paramref name="goods"/> the group can pay for out of <paramref name="purse"/> and the member can carry in
+    /// <paramref name="carried"/>; null when there is none.
+    /// </summary>
+    (Meitou.Simulation.Items.Inventory Stock, Meitou.Simulation.Items.ItemInstance Item)? Affordable(List<(Meitou.Simulation.Items.Inventory Stock, Meitou.Simulation.Items.ItemInstance Item)> goods,
+        long purse, Meitou.Simulation.Items.Inventory carried)
+    {
+        foreach (var g in goods)
+        {
+            if (PriceOf(g.Item) > purse) continue;
+
+            var one = g.Item.Quantity == 1 ? g.Item : g.Item.WithQuantity(1);
+            if (carried.HasRoomIn(Carried, one)) return g;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// What one of <paramref name="item"/> costs a visitor: its record's value, at least 1.
+    /// </summary>
+    long PriceOf(Meitou.Simulation.Items.ItemInstance item) => Math.Max(1, _data.Db.Find(item.Record)?.GetInt("value") ?? 1);
 
     /// <summary>
     /// Brings visitors to a town open to the public when they are due: one group at a time, every so often (the setting, give or take half),
