@@ -21,26 +21,34 @@ public sealed partial class FiefdomSystem
     const double VisitHours = 8;
 
     /// <summary>
-    /// Where visitors go in a town: its public building with a shop counter inside (the one with the most for sale), else none (they stay at
-    /// the town's middle).
+    /// Where visitors go in a town: its public building with a shop counter inside, or a counter standing outdoors (the one with the most for
+    /// sale), else none (they stay at the town's middle).
     /// </summary>
     BuildSite? ShopBuilding(World world, PlayerTown town) =>
-        PublicCounters(world, town).GroupBy(c => c.Site.Parent!).OrderByDescending(g => g.Sum(c => c.Stock.Items.Count))
+        PublicCounters(world, town).GroupBy(c => c.Site.Parent ?? c.Site.Id).OrderByDescending(g => g.Sum(c => c.Stock.Items.Count))
             .ThenBy(g => g.Key, StringComparer.Ordinal).Select(g => world.Buildings.Find(g.Key)).FirstOrDefault();
 
     /// <summary>
-    /// The town's shop counters inside complete public buildings of the player's, with their goods.
+    /// The town's shop counters of the player's that sell to visitors, with their goods: complete, and inside a complete public building of the
+    /// town or standing outdoors in it (where the placement rule lets furniture stand; such a counter is open while the town is).
     /// </summary>
     IEnumerable<(BuildSite Site, Meitou.Simulation.Items.Inventory Stock)> PublicCounters(World world, PlayerTown town)
     {
         foreach (var m in world.Machines.All)
         {
             if (m.Data.Function != ShopCounterFunction || m.Storage is not { } stock) continue;
-            if (world.Buildings.Find(m.Site) is not { Complete: true, Parent: { } parent } site || site.Owner != world.Player.Faction) continue;
-            if (world.Buildings.Find(parent) is not { Complete: true, Public: true } building || TownOf(world, building) != town.Number) continue;
+            if (world.Buildings.Find(m.Site) is not { Complete: true } site || site.Owner != world.Player.Faction) continue;
+            if (!SellsToVisitors(world, town, site)) continue;
             yield return (site, stock);
         }
     }
+
+    /// <summary>
+    /// Whether a counter of the town sells to its visitors: its building is complete, public and in the town, or it stands outdoors in the town.
+    /// </summary>
+    static bool SellsToVisitors(World world, PlayerTown town, BuildSite counter) => counter.Parent is { } parent
+        ? world.Buildings.Find(parent) is { Complete: true, Public: true } building && TownOf(world, building) == town.Number
+        : TownOf(world, counter) == town.Number;
 
     /// <summary>
     /// The visitors buy at the town's counters: each member buys one item, the first on the counters (food first) the group's purse can pay

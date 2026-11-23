@@ -20,6 +20,7 @@ public sealed class FiefdomMod : IMod
         FiefdomSystem.Context = context;
         FiefdomSystem.RollPurpose = context.RngPurpose;
         context.AddSettings(FiefdomSettings.Current);
+        Placement.Register(context);
         SortBuildings(context.Data);
         string settlers = SettlerData.Load(context.Data, context.Log);
         context.AddJobType((Meitou.Data.Gameplay.Ai.TaskType)FiefdomSystem.MerchantRow, "Keeping a shop counter");

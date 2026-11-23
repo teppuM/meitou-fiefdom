@@ -335,7 +335,7 @@ public sealed partial class FiefdomSystem
         {
             if (world.Buildings.Find(m.Site) is not { Complete: true } site || site.Owner != world.Player.Faction || TownOf(world, site) != town) continue;
             if (m.Data.Function == ObjectRanges.TurretFunction) yield return new WorkPost(site, PostKind.Turret, 1);
-            else if (m.Data.Function == ShopCounterFunction && m.Storage is not null && site.Parent is not null) yield return new WorkPost(site, PostKind.Counter, 1);
+            else if (m.Data.Function == ShopCounterFunction && m.Storage is not null) yield return new WorkPost(site, PostKind.Counter, 1);
             else if (m.Data.Operable) yield return new WorkPost(site, PostKind.Machine, Math.Max(1, m.Data.MaxOperators));
         }
     }
