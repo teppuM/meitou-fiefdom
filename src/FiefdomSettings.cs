@@ -48,4 +48,10 @@ public sealed class FiefdomSettings
     /// </summary>
     [Setting("Food kept back for meals (per resident)", Hint = "Merchants never take the town's last food for their counters: this many food items per resident stay in town stock.", Min = 0, Max = 20, Step = 1)]
     public int FoodKeptPerResident { get; set; } = 2;
+
+    /// <summary>
+    /// What share of a counter's takings its merchant keeps, in percent; the rest stays with the player.
+    /// </summary>
+    [Setting("Merchant's share of the takings (%)", Hint = "Of every sale at a shop counter a merchant keeps, this share goes from your money into the merchant's home purse. The rest is yours.", Min = 0, Max = 100, Step = 5)]
+    public int MerchantSharePercent { get; set; } = 25;
 }

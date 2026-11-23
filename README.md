@@ -15,7 +15,7 @@ A code mod for [MeitouClient](https://meitou.kenshi.wiki) that turns one of your
 - A house gets two buttons on its own panel:
   - **Lives here** cycles between Residents, Guards and Nobody. One person lives there per bed.
   - **Boxes inside** switches between All town stock and As marked.
-- Each storage box can be marked **Keep for me** or **Town stock**. Only town stock is used by your townspeople.
+- Each storage box can be marked **Keep for me** or **Town stock**. Your townspeople and guards eat from town stock, fetch their machines' goods from it and put what they make in it; a box kept for you they never touch. Your own squads use every box as before. A town with townspeople and no town stock says so in its news.
 
 ### Settlers and the steward
 
@@ -42,7 +42,7 @@ A code mod for [MeitouClient](https://meitou.kenshi.wiki) that turns one of your
 - Fiefdom only ever takes away the jobs it gave, so a job another mod gives one of your townspeople stays.
 - Wages are paid at each day change, per shift worked, from your money into the worker's home purse. Unpaid workers stop, and leave after three unpaid days.
 - Residents without a post earn a small outside income instead.
-- A resident on a **shop counter** becomes its merchant. They carry goods from town-stock boxes to the counter, never the town's last meals, and the game's own shoppers buy from it. The takings are yours. You choose what kinds of goods each counter sells.
+- A resident on a **shop counter** becomes its merchant. They carry goods from town-stock boxes to the counter, never the town's last meals, and the game's own shoppers and the town's visitors buy from it. The takings are yours, less the merchant's share (25% to start), which goes into the merchant's household purse. You choose what kinds of goods each counter sells.
 
 ### Guards
 
@@ -78,6 +78,7 @@ On the Settings screen's Mods page:
 | Hours between visitor groups (0 for no visitors) | 24 | 0 to 96 |
 | Days starving before a resident leaves | 1 | 0.25 to 5 |
 | Food kept back for meals, per resident | 2 | 0 to 20 |
+| Merchant's share of the takings, percent | 25 | 0 to 100 |
 
 ## Getting started
 
@@ -94,7 +95,7 @@ On the Settings screen's Mods page:
 
 Or subscribe on the [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3843652260) and turn it on the same way.
 
-It needs MeitouClient 0.22.2 from the nightly of 2026-11-21 on. That nightly changed how mods give characters jobs, so older builds refuse to load this mod.
+It needs MeitouClient 0.22.2 from the second nightly of 2026-11-22 on. Older builds lack what the mod is built on and refuse to load it.
 
 ## Known limits
 

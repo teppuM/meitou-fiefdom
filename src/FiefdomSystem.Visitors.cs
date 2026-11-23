@@ -53,7 +53,7 @@ public sealed partial class FiefdomSystem
     /// <summary>
     /// The visitors buy at the town's counters: each member buys one item, the first on the counters (food first) the group's purse can pay
     /// for and the member can carry, at the item's own value from the group's purse into the player's money, as a sale at a player's counter
-    /// pays. The news says what they spent.
+    /// pays, the counter's merchant owed their share as for any sale there. The news says what they spent.
     /// </summary>
     void VisitorsBuy(World world, PlayerTown town, TownState state, SettlerGroup group, Squad squad)
     {
@@ -77,6 +77,7 @@ public sealed partial class FiefdomSystem
             inv.AddTo(Carried, one);
             squad.Money -= price;
             world.Player.Money += price;
+            OweShare(world, counters.First(c => c.Stock == choice.Stock).Site.Id, price, $"{one.Name} to a visitor, group {group.Serial}");
             bought++;
             spent += price;
             Log($"group {group.Serial}: {table.Cold(slot)!.Name} bought {one.Name} for {price}");

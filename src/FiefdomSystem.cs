@@ -65,9 +65,9 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
 
     /// <summary>
     /// The save data's format number (1: purposes and marks; 2: also towns, groups, residents and the serial counter; 3: also the day residents
-    /// were last paid, who is starving since when, and each town's hungry leavings; 4: rules in place of purposes, what each counter sells and the residents' posts; 5: also the goods each merchant carries for their counter; 6: also each line's hours and each worker's pay record; 7: also the food runners and each town's policies; 8: also when visitors are next due and which groups visit; 9: also whether visitors have shopped; 10: also each post's offered job and the jobs Fiefdom gave each townsperson).
+    /// were last paid, who is starving since when, and each town's hungry leavings; 4: rules in place of purposes, what each counter sells and the residents' posts; 5: also the goods each merchant carries for their counter; 6: also each line's hours and each worker's pay record; 7: also the food runners and each town's policies; 8: also when visitors are next due and which groups visit; 9: also whether visitors have shopped; 10: also each post's offered job and the jobs Fiefdom gave each townsperson; 11: also what each merchant is owed of the takings and what each town's merchants kept today).
     /// </summary>
-    const int SaveVersion = 10;
+    const int SaveVersion = 11;
 
     /// <summary>
     /// How often, in ticks, the view is rebuilt when nothing the system knows of has changed.
@@ -368,18 +368,24 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
     /// </summary>
     public void SlowWorld(World world)
     {
-        if (world.Tick % SettlerEvery == 0)
+        bool settle = world.Tick % SettlerEvery == 0;
+        if (settle)
         {
             KeyOldTowns(world);
             StepSettlers(world);
         }
 
         bool built = world.Buildings.Revision != _seenRevision;
-        if (!_dirty && !built && world.Tick % RefreshEvery != 0) return;
+        if (!_dirty && !built && world.Tick % RefreshEvery != 0)
+        {
+            if (settle) BuildStores(world);
+            return;
+        }
 
         _seenRevision = world.Buildings.Revision;
         _dirty = false;
         Forget(world);
+        BuildStores(world);
         View = Build(world);
     }
 
@@ -409,6 +415,7 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
         _trips.Clear();
         _rounds.Clear();
         _reattach = true;
+        BuildStores(world);
     }
 
     /// <summary>
@@ -507,6 +514,18 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
                 w.Write(job.Site);
             }
         }
+        w.Write(_shareOwed.Count);
+        foreach (var (id, owed) in _shareOwed)
+        {
+            w.Write(id);
+            w.Write(owed);
+        }
+        w.Write(_sharesToday.Count);
+        foreach (var (key, cats) in _sharesToday)
+        {
+            w.Write(key);
+            w.Write(cats);
+        }
     }
 
     /// <summary>
@@ -530,6 +549,8 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
         _runners.Clear();
         _rounds.Clear();
         _given.Clear();
+        _shareOwed.Clear();
+        _sharesToday.Clear();
         _adoptJobs = false;
         _paidDay = -1;
         _serial = 0;
@@ -589,6 +610,11 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
             for (int n = r.ReadInt32(); n > 0; n--) _runners[r.ReadUInt64()] = r.ReadString();
         if (version >= 10) ReadGiven(r);
         else _adoptJobs = version >= 4;
+        if (version >= 11)
+        {
+            for (int n = r.ReadInt32(); n > 0; n--) _shareOwed[r.ReadUInt64()] = r.ReadInt64();
+            for (int n = r.ReadInt32(); n > 0; n--) _sharesToday[r.ReadString()] = r.ReadInt64();
+        }
         _dirty = true;
     }
 
@@ -684,6 +710,16 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
                 hasher.Add((int)job.Type);
                 hasher.Add(Rng.StableHash(job.Site));
             }
+        foreach (var (id, owed) in _shareOwed)
+        {
+            hasher.Add(id);
+            hasher.Add(owed + 500);
+        }
+        foreach (var (key, cats) in _sharesToday)
+        {
+            hasher.Add(Rng.StableHash(key));
+            hasher.Add(cats + 600);
+        }
     }
 
     #endregion

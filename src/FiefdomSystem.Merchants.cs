@@ -133,9 +133,7 @@ public sealed partial class FiefdomSystem : IChooserOwner
         {
             if (!m.Data.IsStorage || m.Storage is not { } stock) continue;
             if (world.Buildings.Find(m.Site) is not { Complete: true } site || site.Owner != world.Player.Faction || TownOf(world, site) != town) continue;
-            bool marked = _marks.GetValueOrDefault(site.Id) == StorageMark.TownStock;
-            bool inStore = site.Parent is { } parent && (_rules.GetValueOrDefault(parent) & BuildingRule.TownStock) != 0;
-            if (marked || inStore) yield return (site, stock);
+            if (IsTownStock(site)) yield return (site, stock);
         }
     }
 

@@ -10,7 +10,7 @@
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <!-- The game the mod is compiled against: an official MeitouClient release folder, the one holding MeitouClient.dll
          (pass -p:MeitouBin=<folder>/). -->
-    <MeitouBin Condition="'$(MeitouBin)' == ''">$(MSBuildThisFileDirectory)../../../official/Meitou-0.22.2-nightly.20261121-win-x64/Meitou-0.22.2-nightly.20261121-win-x64/</MeitouBin>
+    <MeitouBin Condition="'$(MeitouBin)' == ''">$(MSBuildThisFileDirectory)../../../official/Meitou-0.22.2-nightly.20261122.2-win-x64/Meitou-0.22.2-nightly.20261122.2-win-x64/</MeitouBin>
   </PropertyGroup>
 
   <!-- A self-built MeitouClient stamps its assemblies 1.0.0.0, the official releases their game version (0.20.0.0): a mod compiled against a

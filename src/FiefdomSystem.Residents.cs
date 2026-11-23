@@ -41,6 +41,7 @@ public sealed partial class FiefdomSystem
 
         int days = day - _paidDay;
         _paidDay = day;
+        TellShares(world);
         PayWages(world);
         long each = (long)FiefdomSettings.Current.OutsideIncome * days;
         if (each <= 0) return;

@@ -608,6 +608,7 @@ public sealed partial class FiefdomSystem
 
         foreach (var (id, holder) in _holders.ToList()) StepHolder(world, id, holder, live);
         DropLeftovers(world);
+        PayShares(world);
     }
 
     /// <summary>
