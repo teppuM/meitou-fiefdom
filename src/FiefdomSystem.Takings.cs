@@ -49,6 +49,12 @@ public sealed partial class FiefdomSystem : ITradeObserver
     }
 
     /// <summary>
+    /// Whether <paramref name="holder"/> keeps a shop counter (the counter's own post, not another mod's job offered on it).
+    /// </summary>
+    static bool IsMerchant(World world, PostHolder holder) =>
+        holder.Offer == 0 && world.Machines.Find(holder.Site) is { Data.Function: ShopCounterFunction };
+
+    /// <summary>
     /// The lasting id of the merchant keeping <paramref name="counter"/>: the holder on shift now, else the first holder; null with none.
     /// </summary>
     ulong? MerchantOf(World world, string counter)

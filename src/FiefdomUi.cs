@@ -610,7 +610,7 @@ sealed class FiefdomUi : IUiExtension
         string bill = town.LastPaid > 0 || town.LastUnpaid > 0
             ? $" Last day change: {town.LastPaid} cats paid{(town.LastUnpaid > 0 ? $", {town.LastUnpaid} went unpaid" : "")}." : "";
         sheet.Line("work-wage", $"Wage: {FiefdomSettings.Current.WagePerShift} cats a shift worked, guards {FiefdomSettings.Current.GuardWagePerDay} a day, from your money.{bill}", note: true);
-        sheet.Line("work-share", $"Merchants keep {FiefdomSettings.Current.MerchantSharePercent}% of what their counter takes; the rest is yours.", note: true);
+        sheet.Line("work-share", $"Merchants take no wage: they keep {FiefdomSettings.Current.MerchantSharePercent}% of what their counter takes, and the rest is yours.", note: true);
         sheet.Line("work-how", $"Day {FiefdomSystem.DayShiftStarts}:00 to {FiefdomSystem.NightShiftStarts}:00, night the rest. Workers step away to eat when hungry.", note: true);
         if (town.Unposted.Count > 0)
             sheet.Buttons(("work-all", "Show all", "work-filter:0", !s_openOnly, true), ("work-open", "Places open", "work-filter:1", s_openOnly, true),

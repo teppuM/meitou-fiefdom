@@ -166,6 +166,7 @@ public sealed partial class FiefdomSystem
     /// <summary>
     /// At a day change: every worker is paid the wage for each shift they worked that day, from the player's money into their home's purse, in
     /// lasting-id order while the money lasts. One left unpaid stops working until paid; three day changes unpaid in a row and they leave the town.
+    /// Merchants are paid no wage: they live on their share of the takings (<see cref="PayShares"/>).
     /// </summary>
     void PayWages(World world)
     {
@@ -177,6 +178,12 @@ public sealed partial class FiefdomSystem
             var pay = PayOf(id);
             int shifts = (pay.Worked & 1) + (pay.Worked >> 1 & 1);
             pay.Worked = 0;
+            if (IsMerchant(world, holder))
+            {
+                pay.Unpaid = 0;
+                continue;
+            }
+
             // One who stopped working unpaid is owed a shift's back pay, which puts them back to work.
             long owed = wage * (shifts > 0 ? shifts : pay.Unpaid > 0 ? 1 : 0);
             var bill = _lastBill.GetValueOrDefault(holder.Town);

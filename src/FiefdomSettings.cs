@@ -22,7 +22,7 @@ public sealed class FiefdomSettings
     /// <summary>
     /// What a worker earns for each shift worked (day 7:00 to 19:00, night the rest), from the player's money at each day change.
     /// </summary>
-    [Setting("Wage per shift worked (cats)", Hint = "Paid from your money at each day change, for each day or night shift a worker spent on their post. Unpaid workers stop; three days unpaid and they leave.", Min = 0, Max = 200, Step = 5)]
+    [Setting("Wage per shift worked (cats)", Hint = "Paid from your money at each day change, for each day or night shift a worker spent on their post (merchants take no wage). Unpaid workers stop; three days unpaid and they leave.", Min = 0, Max = 200, Step = 5)]
     public int WagePerShift { get; set; } = 30;
 
     /// <summary>
@@ -52,6 +52,6 @@ public sealed class FiefdomSettings
     /// <summary>
     /// What share of a counter's takings its merchant keeps, in percent; the rest stays with the player.
     /// </summary>
-    [Setting("Merchant's share of the takings (%)", Hint = "Of every sale at a shop counter a merchant keeps, this share goes from your money into the merchant's home purse. The rest is yours.", Min = 0, Max = 100, Step = 5)]
+    [Setting("Merchant's share of the takings (%)", Hint = "Of every sale at a shop counter a merchant keeps, this share goes from your money into the merchant's home purse: it is all a merchant earns. The rest is yours.", Min = 0, Max = 100, Step = 5)]
     public int MerchantSharePercent { get; set; } = 25;
 }

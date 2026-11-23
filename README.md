@@ -42,7 +42,7 @@ A code mod for [MeitouClient](https://meitou.kenshi.wiki) that turns one of your
 - Fiefdom only ever takes away the jobs it gave, so a job another mod gives one of your townspeople stays.
 - Wages are paid at each day change, per shift worked, from your money into the worker's home purse. Unpaid workers stop, and leave after three unpaid days.
 - Residents without a post earn a small outside income instead.
-- A resident on a **shop counter** becomes its merchant. They carry goods from town-stock boxes to the counter, never the town's last meals, and the game's own shoppers and the town's visitors buy from it. The takings are yours, less the merchant's share (25% to start), which goes into the merchant's household purse. You choose what kinds of goods each counter sells.
+- A resident on a **shop counter** becomes its merchant. They carry goods from town-stock boxes to the counter, never the town's last meals, and the game's own shoppers and the town's visitors buy from it. The takings are yours, less the merchant's share (25% to start), which goes into the merchant's household purse. A merchant takes no wage: the share is all they earn, so a counter you stock yourself with nobody on it keeps every cat for you. You choose what kinds of goods each counter sells.
 
 ### Guards
 
