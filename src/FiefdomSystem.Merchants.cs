@@ -192,7 +192,7 @@ public sealed partial class FiefdomSystem : IChooserOwner
             TownReserve? reserve = null;
             foreach (var holder in _holders.Values)
             {
-                if (holder.Town != state.Key || _restockFrom.ContainsKey(holder.Site)) continue;
+                if (holder.Town != state.Key || holder.Offer != 0 || _restockFrom.ContainsKey(holder.Site)) continue;
                 if (world.Machines.Find(holder.Site) is not { Data.Function: ShopCounterFunction, Storage: { } counter }) continue;
 
                 boxes ??= [.. TownStock(world, town.Number)];

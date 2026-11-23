@@ -1,4 +1,5 @@
 using Meitou.Data;
+using Meitou.Data.Gameplay.Ai;
 using Meitou.Modding;
 using Meitou.Simulation;
 using Meitou.Simulation.Ai;
@@ -64,9 +65,9 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
 
     /// <summary>
     /// The save data's format number (1: purposes and marks; 2: also towns, groups, residents and the serial counter; 3: also the day residents
-    /// were last paid, who is starving since when, and each town's hungry leavings; 4: rules in place of purposes, what each counter sells and the residents' posts; 5: also the goods each merchant carries for their counter; 6: also each line's hours and each worker's pay record; 7: also the food runners and each town's policies; 8: also when visitors are next due and which groups visit; 9: also whether visitors have shopped).
+    /// were last paid, who is starving since when, and each town's hungry leavings; 4: rules in place of purposes, what each counter sells and the residents' posts; 5: also the goods each merchant carries for their counter; 6: also each line's hours and each worker's pay record; 7: also the food runners and each town's policies; 8: also when visitors are next due and which groups visit; 9: also whether visitors have shopped; 10: also each post's offered job and the jobs Fiefdom gave each townsperson).
     /// </summary>
-    const int SaveVersion = 9;
+    const int SaveVersion = 10;
 
     /// <summary>
     /// How often, in ticks, the view is rebuilt when nothing the system knows of has changed.
@@ -157,6 +158,7 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
         _aggro = context.Find<AggroSystem>();
         _construction = context.Find<ConstructionSystem>();
         _production = context.Find<ProductionSystem>();
+        JobOffers.Bind(_player);
     }
 
     /// <summary>
@@ -473,6 +475,7 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
             w.Write(h.Town);
             w.Write(h.Site);
             w.Write((byte)h.Shift);
+            w.Write(h.Offer);
         }
         w.Write(_lineHours.Count);
         foreach (var (line, hours) in _lineHours)
@@ -492,6 +495,17 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
         {
             w.Write(id);
             w.Write(key);
+        }
+        w.Write(_given.Count);
+        foreach (var (id, jobs) in _given)
+        {
+            w.Write(id);
+            w.Write(jobs.Count);
+            foreach (var job in jobs)
+            {
+                w.Write((int)job.Type);
+                w.Write(job.Site);
+            }
         }
     }
 
@@ -515,6 +529,8 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
         _pay.Clear();
         _runners.Clear();
         _rounds.Clear();
+        _given.Clear();
+        _adoptJobs = false;
         _paidDay = -1;
         _serial = 0;
         int version = r.ReadInt32();
@@ -562,7 +578,7 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
                 _carrying[id] = goods;
             }
             for (int n = r.ReadInt32(); n > 0; n--)
-                _holders[r.ReadUInt64()] = new PostHolder(r.ReadString(), r.ReadString(), (Shift)r.ReadByte());
+                _holders[r.ReadUInt64()] = new PostHolder(r.ReadString(), r.ReadString(), (Shift)r.ReadByte(), version >= 10 ? r.ReadInt32() : 0);
         }
         if (version >= 6)
         {
@@ -571,7 +587,23 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
         }
         if (version >= 7)
             for (int n = r.ReadInt32(); n > 0; n--) _runners[r.ReadUInt64()] = r.ReadString();
+        if (version >= 10) ReadGiven(r);
+        else _adoptJobs = version >= 4;
         _dirty = true;
+    }
+
+    /// <summary>
+    /// Reads the jobs Fiefdom gave each townsperson (format 10).
+    /// </summary>
+    void ReadGiven(BinaryReader r)
+    {
+        for (int n = r.ReadInt32(); n > 0; n--)
+        {
+            ulong id = r.ReadUInt64();
+            var jobs = new List<GivenJob>();
+            for (int m = r.ReadInt32(); m > 0; m--) jobs.Add(new GivenJob((TaskType)r.ReadInt32(), r.ReadString()));
+            _given[id] = jobs;
+        }
     }
 
     /// <summary>
@@ -628,6 +660,7 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
             hasher.Add(id);
             hasher.Add(Rng.StableHash(h.Site));
             hasher.Add((int)h.Shift);
+            hasher.Add(h.Offer);
         }
         foreach (var (line, hours) in _lineHours)
         {
@@ -644,6 +677,13 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
             hasher.Add(id);
             hasher.Add(Rng.StableHash(key) + 400);
         }
+        foreach (var (id, jobs) in _given)
+            foreach (var job in jobs)
+            {
+                hasher.Add(id);
+                hasher.Add((int)job.Type);
+                hasher.Add(Rng.StableHash(job.Site));
+            }
     }
 
     #endregion

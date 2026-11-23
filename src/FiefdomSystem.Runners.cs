@@ -69,11 +69,7 @@ public sealed partial class FiefdomSystem
                 if (world.Buildings.FindTown(add.Town) is not { } town || !IsFiefdom(world, town) || KeyOf(town) is not { } key) return true;
                 ulong id = add.Character.IsNone ? IdleResidents(world, key).FirstOrDefault() : ResidentLasting(world, add.Character);
                 if (id == 0 || _residents[id].Town != key || IsGuard(id) || _runners.Count(r => r.Value == key) >= RunnerPlaces(key)) return true;
-                if (_holders.Remove(id, out var was))
-                {
-                    var c = world.LastingIds.Find(new LastingId(id));
-                    if (!c.IsNone && world.Characters.TryResolveNext(c, out int slot) && world.Characters.Cold(slot) is { } cold) TakeJob(world, c, cold, was.Site);
-                }
+                if (_holders.Remove(id)) DropGiven(world, id);
                 _runners[id] = key;
                 TownOf(key).Tell(world.GameHours, $"{_residents[id].Name} now carries meals to the town's hungry people");
                 Log($"{town.Name}: {_residents[id].Name} is a food runner");

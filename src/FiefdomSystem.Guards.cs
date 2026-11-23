@@ -242,11 +242,7 @@ public sealed partial class FiefdomSystem
         var c = world.LastingIds.Find(new LastingId(id));
         if (c.IsNone || GuardSquad(world, town, house) is not { } squad) return;
 
-        if (_holders.Remove(id, out var was))
-        {
-            var table = world.Characters;
-            if (table.TryResolveNext(c, out int slot) && table.Cold(slot) is { } cold) TakeJob(world, c, cold, was.Site);
-        }
+        if (_holders.Remove(id)) DropGiven(world, id);
         if (!MoveTo(world, c, squad))
         {
             Log($"{town.Name}: {r.Name} could not join the guards (squad {squad.Id} full?)");

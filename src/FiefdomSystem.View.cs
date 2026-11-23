@@ -236,7 +236,7 @@ public sealed partial class FiefdomSystem
     List<WorkLine> WorkLines(World world, PlayerTown town, TownState state)
     {
         var lines = new List<WorkLine>();
-        foreach (var group in WorkPosts(world, town.Number).GroupBy(p => LineOf(p.Site)))
+        foreach (var group in PostsOf(world, town.Number).GroupBy(LineOf))
         {
             var posts = group.ToList();
             var first = posts[0].Site;
@@ -244,13 +244,13 @@ public sealed partial class FiefdomSystem
             var holders = new List<HolderLine>();
             foreach (var (id, h) in _holders)
             {
-                if (h.Town != state.Key || !sites.Contains(h.Site)) continue;
+                if (h.Town != state.Key || h.Offer != posts[0].Offer || !sites.Contains(h.Site)) continue;
                 var c = world.LastingIds.Find(new LastingId(id));
                 var pay = _pay.GetValueOrDefault(id);
                 if (!c.IsNone) holders.Add(new HolderLine(c, _residents.TryGetValue(id, out var r) ? r.Name : "someone", h.Shift, pay?.Eating ?? false, pay?.Unpaid > 0));
             }
             string where = first.Parent is { } parent && world.Buildings.Find(parent) is { } outer ? $"in the {outer.Name}" : "outside";
-            string name = posts.Count > 1 ? $"{first.Name} x{posts.Count}" : first.Name;
+            string name = posts.Count > 1 ? $"{NameOf(posts[0])} x{posts.Count}" : NameOf(posts[0]);
             lines.Add(new WorkLine(group.Key, name, where, posts[0].Kind, posts.Sum(p => p.Places), HoursOf(state.Key, group.Key), holders, sites,
                 posts[0].Kind == PostKind.Counter ? SellsAt(first.Id) : Goods.None));
         }
@@ -306,7 +306,7 @@ public sealed partial class FiefdomSystem
             if (r.Town != state.Key) continue;
             var c = world.LastingIds.Find(new LastingId(id));
             if (c.IsNone) continue;
-            string post = _holders.TryGetValue(id, out var h) ? $"{NameOfSite(world, h.Site)}, {Names.Of(h.Shift)}"
+            string post = _holders.TryGetValue(id, out var h) ? $"{NameOfPost(world, h)}, {Names.Of(h.Shift)}"
                 : _runners.ContainsKey(id) ? "food runner, day and night"
                 : IsGuard(id) ? $"guard, {((_rules.GetValueOrDefault(r.Home) & BuildingRule.GateDuty) != 0 ? "gates" : "patrol")}, {NameOfSite(world, r.Home)}" : "";
             people.Add(new PersonLine(c, r.Name, post));
@@ -320,18 +320,18 @@ public sealed partial class FiefdomSystem
     List<PostLine> PostLines(World world, PlayerTown town, TownState state, out List<PersonLine> unposted)
     {
         var lines = new List<PostLine>();
-        foreach (var post in WorkPosts(world, town.Number))
+        foreach (var post in PostsOf(world, town.Number))
         {
             var holders = new List<HolderLine>();
             foreach (var (id, h) in _holders)
             {
-                if (h.Site != post.Site.Id) continue;
+                if (!post.HeldBy(h)) continue;
                 var c = world.LastingIds.Find(new LastingId(id));
                 if (!c.IsNone) holders.Add(new HolderLine(c, _residents.TryGetValue(id, out var r) ? r.Name : "someone", h.Shift));
             }
-            string name = post.Site.Parent is { } parent && world.Buildings.Find(parent) is { } outer ? $"{post.Site.Name} in the {outer.Name}" : post.Site.Name;
+            string name = post.Site.Parent is { } parent && world.Buildings.Find(parent) is { } outer ? $"{NameOf(post)} in the {outer.Name}" : NameOf(post);
             lines.Add(new PostLine(post.Site.Id, name, post.Kind, post.Places, holders,
-                HoldersOn(post.Site.Id, Shift.Day) < post.Places, HoldersOn(post.Site.Id, Shift.Night) < post.Places,
+                HoldersOn(post, Shift.Day) < post.Places, HoldersOn(post, Shift.Night) < post.Places,
                 post.Kind == PostKind.Counter ? SellsAt(post.Site.Id) : Goods.None));
         }
 

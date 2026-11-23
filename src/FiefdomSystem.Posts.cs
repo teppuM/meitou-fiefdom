@@ -1,5 +1,6 @@
 using System.Numerics;
 using Meitou.Data.Gameplay.Ai;
+using Meitou.Data.Gameplay.Construction;
 using Meitou.Data.World;
 using Meitou.Simulation;
 using Meitou.Simulation.Ai;
@@ -37,6 +38,9 @@ public enum PostKind : byte
 
     /// <summary>A food runner (the mod's job: carries meals from town stock to hungry residents and guards).</summary>
     Runner,
+
+    /// <summary>A building another code mod offers one of its jobs on, for people (the game's job offers): the holder gets that job there.</summary>
+    Offer,
 }
 
 /// <summary>
@@ -52,9 +56,16 @@ public enum Hours : byte
 }
 
 /// <summary>
-/// A resident's post: the town, the furniture's building id and the shift.
+/// A resident's post: the town, the furniture's building id, the shift, and the offered job when the post is another mod's job on that building
+/// (0 for the furniture's own job: operating a machine, a turret, a counter).
 /// </summary>
-public sealed record PostHolder(string Town, string Site, Shift Shift);
+public sealed record PostHolder(string Town, string Site, Shift Shift, int Offer = 0);
+
+/// <summary>
+/// A job Fiefdom put on a townsperson's job list: its type and building. Fiefdom only ever takes off the jobs it gave, so a job the player or
+/// another mod gave the same person stays.
+/// </summary>
+public readonly record struct GivenJob(TaskType Type, string Site);
 
 /// <summary>
 /// Puts someone on a line of work (the same furniture in the same building): <paramref name="Character"/>, or with none the first resident
@@ -80,7 +91,7 @@ public sealed record PutIdleToWork(int Town) : SettlerCommand;
 /// <summary>
 /// Puts a resident of the town on a post (a work machine or turret of the town with a place free on the shift).
 /// </summary>
-public sealed record AssignPost(int Town, CharacterId Character, string Site) : SettlerCommand;
+public sealed record AssignPost(int Town, CharacterId Character, string Site, int Offer = 0) : SettlerCommand;
 
 /// <summary>
 /// Takes a resident off their post.
@@ -219,15 +230,62 @@ public sealed partial class FiefdomSystem
     readonly SortedDictionary<string, Hours> _lineHours = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// A post: the furniture's building, what kind it is, and how many may work it on each shift (the data's max operators; a turret takes one).
+    /// A post: the furniture's building, what kind it is, how many may work it on each shift (the data's max operators; a turret takes one), the
+    /// offered job for another mod's work (0 for the furniture's own), and the kind of work its holder also covers elsewhere in town while on
+    /// shift (null for none; see <see cref="CoverOf"/>).
     /// </summary>
-    public readonly record struct WorkPost(BuildSite Site, PostKind Kind, int Places);
+    public readonly record struct WorkPost(BuildSite Site, PostKind Kind, int Places, int Offer = 0, string? Cover = null)
+    {
+        /// <summary>
+        /// The order that gives a holder of this post its job on the building.
+        /// </summary>
+        public TaskType Order => Kind switch
+        {
+            PostKind.Turret => TaskType.UseTurret,
+            PostKind.Counter => (TaskType)MerchantRow,
+            PostKind.Offer => (TaskType)Offer,
+            _ => TaskType.OperateMachinery,
+        };
+
+        /// <summary>
+        /// The job type the list then holds: the game stores some orders as another type (a turret's as its man-a-turret job).
+        /// </summary>
+        public TaskType Job => PermaJobs.JobOf(Order) ?? Order;
+
+        /// <summary>
+        /// Whether <paramref name="holder"/> holds this post.
+        /// </summary>
+        public bool HeldBy(PostHolder holder) => holder.Site == Site.Id && holder.Offer == Offer;
+    }
 
     /// <summary>
     /// A post's line of work: the building it stands in (or none, outside) and the furniture's name, so the same furniture in one building is one
-    /// line on the work list.
+    /// line on the work list; another mod's job on it is a line of its own, named with the job's caption.
     /// </summary>
-    static string LineOf(BuildSite site) => $"{site.Parent ?? ""}|{site.Name}";
+    static string LineOf(BuildSite site, int offer = 0) =>
+        offer != 0 ? $"{site.Parent ?? ""}|{site.Name}: {CaptionOf(offer)}" : $"{site.Parent ?? ""}|{site.Name}";
+
+    /// <summary>
+    /// An offered job's caption, or its number when no mod offers it any more (its holders lose the post at the next step).
+    /// </summary>
+    static string CaptionOf(int offer) => JobOffers.Of(offer)?.Caption ?? $"job {offer}";
+
+    /// <summary>
+    /// The line of work of a post.
+    /// </summary>
+    static string LineOf(WorkPost post) => LineOf(post.Site, post.Offer);
+
+    /// <summary>
+    /// The line of work a holder's post belongs to, or null when its building is gone.
+    /// </summary>
+    static string? LineOf(World world, PostHolder holder) => world.Buildings.Find(holder.Site) is { } site ? LineOf(site, holder.Offer) : null;
+
+    /// <summary>
+    /// The kind of work a machine's holder covers beyond their own post: any farm for a farmer (every crop is its own machine type), else the
+    /// machine type (the functionality record, which a machine's tiers share: Well, Well II and Well III are one); null for a machine without one.
+    /// </summary>
+    static string? CoverOf(MachineData data) =>
+        data.Farm is not null ? "farm" : data.Functionality is { } functionality ? "machine:" + functionality : null;
 
     /// <summary>
     /// The hours a line keeps.
@@ -239,11 +297,11 @@ public sealed partial class FiefdomSystem
     /// </summary>
     Shift? FreeShift(WorkPost post, Hours hours, ulong except = 0) => hours switch
     {
-        Hours.Day => HoldersOn(post.Site.Id, Shift.Day, except) < post.Places ? Shift.Day : null,
-        Hours.Night => HoldersOn(post.Site.Id, Shift.Night, except) < post.Places ? Shift.Night : null,
-        Hours.TwoShifts => HoldersOn(post.Site.Id, Shift.Day, except) < post.Places ? Shift.Day
-            : HoldersOn(post.Site.Id, Shift.Night, except) < post.Places ? Shift.Night : null,
-        _ => HoldersOn(post.Site.Id, Shift.Always, except) < post.Places ? Shift.Always : null,
+        Hours.Day => HoldersOn(post, Shift.Day, except) < post.Places ? Shift.Day : null,
+        Hours.Night => HoldersOn(post, Shift.Night, except) < post.Places ? Shift.Night : null,
+        Hours.TwoShifts => HoldersOn(post, Shift.Day, except) < post.Places ? Shift.Day
+            : HoldersOn(post, Shift.Night, except) < post.Places ? Shift.Night : null,
+        _ => HoldersOn(post, Shift.Always, except) < post.Places ? Shift.Always : null,
     };
 
     /// <summary>
@@ -252,12 +310,13 @@ public sealed partial class FiefdomSystem
     bool AddToLine(World world, PlayerTown town, string key, string line, ulong id, bool tell = true)
     {
         var hours = HoursOf(key, line);
-        foreach (var post in WorkPosts(world, town.Number))
+        foreach (var post in PostsOf(world, town.Number))
         {
-            if (LineOf(post.Site) != line || FreeShift(post, hours, id) is not { } shift) continue;
-            _holders[id] = new PostHolder(key, post.Site.Id, shift);
-            if (tell) TownOf(key).Tell(world.GameHours, $"{_residents[id].Name} took the post at the {post.Site.Name} ({Names.Of(shift)})");
-            Log($"{town.Name}: {_residents[id].Name} on the {post.Site.Name} ({post.Site.Id}), {Names.Of(shift)}");
+            if (LineOf(post) != line || FreeShift(post, hours, id) is not { } shift) continue;
+            DropGiven(world, id);
+            _holders[id] = new PostHolder(key, post.Site.Id, shift, post.Offer);
+            if (tell) TownOf(key).Tell(world.GameHours, $"{_residents[id].Name} took the post at the {NameOf(post)} ({Names.Of(shift)})");
+            Log($"{town.Name}: {_residents[id].Name} on the {NameOf(post)} ({post.Site.Id}), {Names.Of(shift)}");
             _dirty = true;
             return true;
         }
@@ -294,18 +353,19 @@ public sealed partial class FiefdomSystem
                 if (!AddToLine(world, town, key, add.Line, id) && before is not null) _holders[id] = before;
                 return true;
             case RemoveWorker remove:
-                var last = _holders.Where(h => h.Value.Town == key && world.Buildings.Find(h.Value.Site) is { } s && LineOf(s) == remove.Line)
+                var last = _holders.Where(h => h.Value.Town == key && LineOf(world, h.Value) == remove.Line)
                     .Select(h => h.Key).DefaultIfEmpty(0UL).Last();
                 if (last != 0 && _holders.Remove(last, out var was))
                 {
-                    TownOf(key).Tell(world.GameHours, $"{_residents[last].Name} left the post at the {NameOfSite(world, was.Site)}");
+                    TownOf(key).Tell(world.GameHours, $"{_residents[last].Name} left the post at the {NameOfPost(world, was)}");
+                    DropGiven(world, last);
                     _dirty = true;
                 }
                 return true;
             case SetLineHours set:
                 if (set.Hours == Hours.DayAndNight) _lineHours.Remove(key + "#" + set.Line);
                 else _lineHours[key + "#" + set.Line] = set.Hours;
-                var workers = _holders.Where(h => h.Value.Town == key && world.Buildings.Find(h.Value.Site) is { } ws && LineOf(ws) == set.Line)
+                var workers = _holders.Where(h => h.Value.Town == key && LineOf(world, h.Value) == set.Line)
                     .Select(h => h.Key).ToList();
                 foreach (var w in workers) _holders.Remove(w);
                 foreach (var w in workers)
@@ -316,7 +376,7 @@ public sealed partial class FiefdomSystem
                 _dirty = true;
                 return true;
             case PutIdleToWork:
-                var lines = WorkPosts(world, town.Number).Select(p => LineOf(p.Site)).Distinct().ToList();
+                var lines = PostsOf(world, town.Number).Select(LineOf).Distinct().ToList();
                 foreach (var idle in IdleResidents(world, key).ToList())
                     foreach (var line in lines)
                         if (AddToLine(world, town, key, line, idle)) break;
@@ -326,8 +386,20 @@ public sealed partial class FiefdomSystem
     }
 
     /// <summary>
+    /// Each town's posts as last read (<see cref="PostsOf"/>), and the tick they were read on.
+    /// </summary>
+    readonly Dictionary<int, List<WorkPost>> _posts = [];
+
+    /// <summary>
+    /// The tick and building revision <see cref="_posts"/> was read at; read again when either moves.
+    /// </summary>
+    (long Tick, long Revision) _postsAt = (-1, -1);
+
+    /// <summary>
     /// The complete posts of the player's in town <paramref name="town"/>, in the machine table's order: every machine people work and every gun
-    /// turret, read from the furniture's own data, so furniture other mods add makes posts too.
+    /// turret, read from the furniture's own data, so furniture other mods add makes posts too; then each job another mod offers to people on a
+    /// building of the town, one post per building and job. Another mod's job covers no other building: the game keeps one job of a mod's type per
+    /// character, so a second building would move the job, not add one (docs/modding.md "Mod jobs").
     /// </summary>
     static IEnumerable<WorkPost> WorkPosts(World world, int town)
     {
@@ -336,19 +408,58 @@ public sealed partial class FiefdomSystem
             if (world.Buildings.Find(m.Site) is not { Complete: true } site || site.Owner != world.Player.Faction || TownOf(world, site) != town) continue;
             if (m.Data.Function == ObjectRanges.TurretFunction) yield return new WorkPost(site, PostKind.Turret, 1);
             else if (m.Data.Function == ShopCounterFunction && m.Storage is not null) yield return new WorkPost(site, PostKind.Counter, 1);
-            else if (m.Data.Operable) yield return new WorkPost(site, PostKind.Machine, Math.Max(1, m.Data.MaxOperators));
+            else if (m.Data.Operable) yield return new WorkPost(site, PostKind.Machine, Math.Max(1, m.Data.MaxOperators), Cover: CoverOf(m.Data));
+        }
+
+        var offers = JobOffers.All();
+        if (offers.Count == 0) yield break;
+
+        foreach (var site in world.Buildings.All)
+        {
+            if (!site.Complete || site.Owner != world.Player.Faction || !JobOffers.OnAny(site.Record) || TownOf(world, site) != town) continue;
+            foreach (var offer in offers)
+                if (offer.Buildings.Contains(site.Record)) yield return new WorkPost(site, PostKind.Offer, 1, offer.Type);
         }
     }
 
     /// <summary>
-    /// The post at <paramref name="site"/> in town <paramref name="town"/>, if it is one.
+    /// The town's posts (<see cref="WorkPosts"/>), read once a tick (again if a building changes within it) and shared by every caller. The list
+    /// is not to be changed.
     /// </summary>
-    static WorkPost? PostAt(World world, int town, string site)
+    List<WorkPost> PostsOf(World world, int town)
     {
-        foreach (var post in WorkPosts(world, town))
-            if (post.Site.Id == site) return post;
+        (long, long) at = (world.Tick, world.Buildings.Revision);
+        if (_postsAt != at)
+        {
+            _posts.Clear();
+            _postsAt = at;
+        }
+
+        if (!_posts.TryGetValue(town, out var posts)) _posts[town] = posts = [.. WorkPosts(world, town)];
+        return posts;
+    }
+
+    /// <summary>
+    /// The post at <paramref name="site"/> in town <paramref name="town"/> giving offered job <paramref name="offer"/> (0 for the furniture's own
+    /// job), if it is one.
+    /// </summary>
+    WorkPost? PostAt(World world, int town, string site, int offer = 0)
+    {
+        foreach (var post in PostsOf(world, town))
+            if (post.Site.Id == site && post.Offer == offer) return post;
         return null;
     }
+
+    /// <summary>
+    /// A post's name for the news: the furniture's, with another mod's job named after it.
+    /// </summary>
+    static string NameOf(WorkPost post) => post.Offer != 0 ? $"{post.Site.Name} ({CaptionOf(post.Offer)})" : post.Site.Name;
+
+    /// <summary>
+    /// The name of a holder's post for the news, or "building" when it is gone.
+    /// </summary>
+    static string NameOfPost(World world, PostHolder holder) =>
+        holder.Offer != 0 ? $"{NameOfSite(world, holder.Site)} ({CaptionOf(holder.Offer)})" : NameOfSite(world, holder.Site);
 
     /// <summary>
     /// Whether a shift is working at <paramref name="hours"/> (game hours).
@@ -366,10 +477,15 @@ public sealed partial class FiefdomSystem
     static bool Overlap(Shift shift, Shift other) => shift == Shift.Always || other == Shift.Always || shift == other;
 
     /// <summary>
-    /// How many holders of the post at <paramref name="site"/> work during <paramref name="shift"/>, leaving out <paramref name="except"/>.
+    /// How many holders of <paramref name="post"/> work during <paramref name="shift"/>, leaving out <paramref name="except"/>.
     /// </summary>
-    int HoldersOn(string site, Shift shift, ulong except = 0) =>
-        _holders.Count(h => h.Key != except && h.Value.Site == site && Overlap(shift, h.Value.Shift));
+    int HoldersOn(WorkPost post, Shift shift, ulong except = 0)
+    {
+        int count = 0;
+        foreach (var (id, holder) in _holders)
+            if (id != except && post.HeldBy(holder) && Overlap(shift, holder.Shift)) count++;
+        return count;
+    }
 
     /// <summary>
     /// The lasting id of a living resident of the player's, or 0.
@@ -394,11 +510,12 @@ public sealed partial class FiefdomSystem
                 return true;
             case ClearPost clear when ResidentLasting(world, clear.Character) is var id and not 0 && _holders.Remove(id, out var was):
                 var r = _residents[id];
-                TownOf(was.Town).Tell(world.GameHours, $"{r.Name} left the post at the {NameOfSite(world, was.Site)}");
+                TownOf(was.Town).Tell(world.GameHours, $"{r.Name} left the post at the {NameOfPost(world, was)}");
+                DropGiven(world, id);
                 return true;
             case SetShift set when ResidentLasting(world, set.Character) is var id and not 0 && _holders.TryGetValue(id, out var holder)
-                && world.Buildings.Find(holder.Site) is { } site && PostAt(world, TownOf(world, site), holder.Site) is { } post
-                && HoldersOn(holder.Site, set.Shift, id) < post.Places:
+                && world.Buildings.Find(holder.Site) is { } site && PostAt(world, TownOf(world, site), holder.Site, holder.Offer) is { } post
+                && HoldersOn(post, set.Shift, id) < post.Places:
                 _holders[id] = holder with { Shift = set.Shift };
                 return true;
             case ClearPost or SetShift:
@@ -415,13 +532,14 @@ public sealed partial class FiefdomSystem
     {
         if (world.Buildings.FindTown(assign.Town) is not { } town || !IsFiefdom(world, town) || KeyOf(town) is not { } key) return;
         ulong id = ResidentLasting(world, assign.Character);
-        if (id == 0 || _residents[id].Town != key || IsGuard(id) || PostAt(world, town.Number, assign.Site) is not { } post) return;
+        if (id == 0 || _residents[id].Town != key || IsGuard(id) || PostAt(world, town.Number, assign.Site, assign.Offer) is not { } post) return;
 
-        if (FreeShift(post, HoursOf(key, LineOf(post.Site)), id) is not { } s) return;
+        if (FreeShift(post, HoursOf(key, LineOf(post)), id) is not { } s) return;
 
-        _holders[id] = new PostHolder(key, post.Site.Id, s);
-        TownOf(key).Tell(world.GameHours, $"{_residents[id].Name} took the post at the {post.Site.Name} ({Names.Of(s)})");
-        Log($"{town.Name}: {_residents[id].Name} on the {post.Site.Name} ({post.Site.Id}), {Names.Of(s)}");
+        DropGiven(world, id);
+        _holders[id] = new PostHolder(key, post.Site.Id, s, post.Offer);
+        TownOf(key).Tell(world.GameHours, $"{_residents[id].Name} took the post at the {NameOf(post)} ({Names.Of(s)})");
+        Log($"{town.Name}: {_residents[id].Name} on the {NameOf(post)} ({post.Site.Id}), {Names.Of(s)}");
     }
 
     /// <summary>
@@ -457,7 +575,7 @@ public sealed partial class FiefdomSystem
     /// </summary>
     void TakeOpenPosts(World world, PlayerTown town, TownState state)
     {
-        var posts = WorkPosts(world, town.Number).ToList();
+        var posts = PostsOf(world, town.Number);
         int idle = 0;
         foreach (var (id, r) in _residents)
         {
@@ -467,8 +585,8 @@ public sealed partial class FiefdomSystem
             idle++;
             foreach (var post in posts)
             {
-                if (HoldersOn(post.Site.Id, Shift.Day) >= post.Places && HoldersOn(post.Site.Id, Shift.Night) >= post.Places) continue;
-                Assign(world, new AssignPost(town.Number, c, post.Site.Id) { Tick = world.Tick });
+                if (HoldersOn(post, Shift.Day) >= post.Places && HoldersOn(post, Shift.Night) >= post.Places) continue;
+                Assign(world, new AssignPost(town.Number, c, post.Site.Id, post.Offer) { Tick = world.Tick });
                 break;
             }
         }
@@ -478,143 +596,272 @@ public sealed partial class FiefdomSystem
     /// <summary>
     /// Keeps the game's job list in step with the posts: a holder on shift has the post's job, one off shift (or whose town is no longer a town)
     /// does not, so off shift the town's own day (home, meals, bed) runs. A holder who is no longer a resident, or whose post is gone, loses it.
+    /// Runs with the settler step, once a game second.
     /// </summary>
     void StepPosts(World world)
     {
-        DropStaleJobs(world);
-        if (_production is null || _holders.Count == 0) return;
+        if (_production is null) return;
+        if (_adoptJobs) AdoptJobs(world);
 
         var live = new Dictionary<string, PlayerTown>(StringComparer.Ordinal);
         foreach (var (town, state) in LiveTowns(world)) live[state.Key] = town;
 
+        foreach (var (id, holder) in _holders.ToList()) StepHolder(world, id, holder, live);
+        DropLeftovers(world);
+    }
+
+    /// <summary>
+    /// One holder's step: loses the post when no longer a resident or the post is gone, leaves it to eat when hungry, and otherwise keeps the jobs
+    /// the post wants at this hour.
+    /// </summary>
+    void StepHolder(World world, ulong id, PostHolder holder, Dictionary<string, PlayerTown> live)
+    {
         var table = world.Characters;
-        double now = world.GameHours;
-        // The farm fields of each town, read once per step for the farmers' rounds.
-        Dictionary<int, List<string>>? fields = null;
-        foreach (var (id, holder) in _holders.ToList())
+        var c = world.LastingIds.Find(new LastingId(id));
+        var cold = !c.IsNone && table.TryResolveNext(c, out int slot) ? table.Cold(slot) : null;
+        bool resident = _residents.TryGetValue(id, out var r) && r.Town == holder.Town && cold is { IsPlayer: true, Medical.Dead: false };
+        var town = live.GetValueOrDefault(holder.Town);
+        if (!resident || town is null || PostAt(world, town.Number, holder.Site, holder.Offer) is not { } post)
         {
-            var c = world.LastingIds.Find(new LastingId(id));
-            int slot = -1;
-            var cold = !c.IsNone && table.TryResolveNext(c, out slot) ? table.Cold(slot) : null;
-            bool resident = _residents.TryGetValue(id, out var r) && r.Town == holder.Town && cold is { IsPlayer: true, Medical.Dead: false };
-            bool standing = live.TryGetValue(holder.Town, out var town) && PostAt(world, town.Number, holder.Site) is not null;
-            if (!resident || !standing)
+            LosePost(world, id, holder, resident ? r : null, town);
+            return;
+        }
+
+        double now = world.GameHours;
+        var pay = PayOf(id);
+        bool hungry = TooHungry(cold!, pay, r!.Name);
+        bool on = OnShift(holder.Shift, now) && !hungry && pay.Unpaid == 0;
+        var own = new GivenJob(post.Job, holder.Site);
+        bool had = Has(cold!, own);
+        if (on && had) pay.Worked |= (byte)(OnShift(Shift.Day, now) ? 1 : 2);
+
+        WantedJobs(world, town.Number, post, on);
+        KeepJobs(world, id, c, cold!);
+        bool has = Has(cold!, own);
+        if (on && !had && has) Log($"{r.Name}: on shift at the {NameOf(post)} ({Names.Of(holder.Shift)}), jobs {cold!.Jobs.Count}");
+        else if (!on && had) Log($"{r.Name}: off shift ({Names.Of(holder.Shift)}), jobs {cold!.Jobs.Count}");
+
+        if (on && !has && _refused.Add(id)) Log($"{r.Name}: could not take the job at the {NameOf(post)}; jobs {cold!.Jobs.Count}");
+        else if (has) _refused.Remove(id);
+    }
+
+    /// <summary>
+    /// A holder who is no longer a resident of the post's town, or whose post is gone: the post and the jobs it gave go, with a line in the news
+    /// when a resident lost it.
+    /// </summary>
+    void LosePost(World world, ulong id, PostHolder holder, Resident? resident, PlayerTown? town)
+    {
+        _holders.Remove(id);
+        DropGiven(world, id);
+        _dirty = true;
+        if (resident is null || town is null) return;
+
+        TownOf(holder.Town).Tell(world.GameHours, $"{resident.Name} has no post now: the {NameOfPost(world, holder)} is gone");
+        Log($"{town.Name}: {resident.Name} lost the post at {holder.Site} (gone)");
+    }
+
+    /// <summary>
+    /// Whether a worker is too hungry to work: below <see cref="Hungry"/> they leave the job to eat, so the town's own day gives them a meal, and
+    /// go back once at <see cref="Fed"/>.
+    /// </summary>
+    static bool TooHungry(CharacterCold cold, PayState pay, string name)
+    {
+        bool hungry = cold.Medical is { } medical && medical.Hunger < (pay.Eating ? Fed : Hungry);
+        if (hungry == pay.Eating) return hungry;
+
+        pay.Eating = hungry;
+        string why = hungry ? $"hungry ({cold.Medical!.Hunger:0.00}), off to eat" : $"fed ({cold.Medical!.Hunger:0.00}), back to work";
+        Log($"{name}: {why}");
+        return hungry;
+    }
+
+    #region Jobs Fiefdom gives
+
+    /// <summary>
+    /// The jobs Fiefdom put on each townsperson's job list, by lasting id, in the order given (saved). Only these are ever taken off again.
+    /// </summary>
+    readonly SortedDictionary<ulong, List<GivenJob>> _given = [];
+
+    /// <summary>
+    /// The jobs one holder should have now, each with the order that gives it (<see cref="WantedJobs"/>), reused for each holder in turn.
+    /// </summary>
+    readonly List<(GivenJob Job, TaskType Order)> _wanted = [];
+
+    /// <summary>
+    /// Holders whose post's job did not go on their list (the game refused it, or they hold another of that mod job's type), so the log says so
+    /// once rather than every step (not saved).
+    /// </summary>
+    readonly HashSet<ulong> _refused = [];
+
+    /// <summary>
+    /// Set when a save from before jobs were tracked is read: the next step takes the townspeople's post jobs as Fiefdom's
+    /// (<see cref="AdoptJobs"/>).
+    /// </summary>
+    bool _adoptJobs;
+
+    /// <summary>
+    /// Fills <see cref="_wanted"/> with the jobs a holder of <paramref name="post"/> should have: none off shift; on shift the post's own job, then
+    /// the same kind of work on every other post of the town (<see cref="WorkPost.Cover"/>), as a player's worker with several jobs has them. The
+    /// job list runs the first job that has work, so a worker whose own post has nothing to do moves on to the next instead of standing idle.
+    /// </summary>
+    void WantedJobs(World world, int town, WorkPost post, bool on)
+    {
+        _wanted.Clear();
+        if (!on) return;
+
+        _wanted.Add((new GivenJob(post.Job, post.Site.Id), post.Order));
+        if (post.Cover is null) return;
+
+        foreach (var other in PostsOf(world, town))
+            if (other.Cover == post.Cover && other.Site.Id != post.Site.Id) _wanted.Add((new GivenJob(other.Job, other.Site.Id), other.Order));
+    }
+
+    /// <summary>
+    /// Brings a townsperson's job list in step with <see cref="_wanted"/>: takes off each job Fiefdom gave that is no longer wanted, and gives each
+    /// wanted job the list lacks. A wanted job already on the list that Fiefdom did not give (the player's, another mod's) is left as it is and
+    /// is never counted as Fiefdom's. Nor is another mod's job given to someone holding one of its type that Fiefdom did not give: the game
+    /// keeps one per type and would move theirs.
+    /// </summary>
+    void KeepJobs(World world, ulong id, CharacterId c, CharacterCold cold)
+    {
+        if (_given.TryGetValue(id, out var given))
+            for (int i = given.Count - 1; i >= 0; i--)
             {
-                _holders.Remove(id);
-                if (cold is { IsPlayer: true }) TakeJob(world, c, cold, holder.Site);
-                if (resident && town is not null)
-                {
-                    TownOf(holder.Town).Tell(now, $"{r!.Name} has no post now: the {NameOfSite(world, holder.Site)} is gone");
-                    Log($"{town.Name}: {r.Name} lost the post at {holder.Site} (gone)");
-                }
-                _dirty = true;
-                continue;
+                if (IsWanted(given[i])) continue;
+                TakeGiven(world, c, cold, given[i]);
+                given.RemoveAt(i);
             }
 
-            bool has = cold!.Jobs.Any(j => j.Site == holder.Site);
-            var pay = PayOf(id);
+        foreach (var (job, order) in _wanted)
+        {
+            if (Has(cold, job) || HoldsOthers(cold, job, given)) continue;
+            Give(world, c, cold, job, order);
+            if (!Has(cold, job)) continue;
+            given ??= _given[id] = [];
+            if (!given.Contains(job)) given.Add(job);
+        }
 
-            // A hungry worker leaves the job until fed, so the town's own day gives them a meal; an unpaid one has stopped working.
-            bool hungry = cold.Medical is { } medical && medical.Hunger < (pay.Eating ? Fed : Hungry);
-            if (hungry != pay.Eating)
-            {
-                pay.Eating = hungry;
-                Log($"{r!.Name}: {(hungry ? $"hungry ({cold.Medical!.Hunger:0.00}), off to eat" : $"fed ({cold.Medical!.Hunger:0.00}), back to work")}");
-            }
-            bool on = OnShift(holder.Shift, now) && !hungry && pay.Unpaid == 0;
-            if (on && has) pay.Worked |= (byte)(OnShift(Shift.Day, now) ? 1 : 2);
-            var post = PostAt(world, town!.Number, holder.Site)!.Value;
-            if (on && !has && post.Kind == PostKind.Counter)
-            {
-                GiveMerchantJob(cold, holder.Site);
-                Log($"{r!.Name}: on shift at the {post.Site.Name} ({Names.Of(holder.Shift)}), merchant");
-            }
-            else if (on && !has)
-            {
-                var type = post.Kind == PostKind.Turret ? TaskType.UseTurret : TaskType.OperateMachinery;
-                _production.Inputs(world, [new AddJob([c], type, holder.Site) { Tick = world.Tick }]);
-                Log($"{r!.Name}: on shift at the {post.Site.Name} ({Names.Of(holder.Shift)}), jobs {cold.Jobs.Count}");
-            }
-            else if (!on && has)
-            {
-                TakeJob(world, c, cold, holder.Site);
-                Log($"{r!.Name}: off shift ({Names.Of(holder.Shift)}), jobs {cold.Jobs.Count}");
-            }
-            if (post.Kind == PostKind.Machine && IsFarm(world, holder.Site))
-            {
-                fields ??= [];
-                if (!fields.TryGetValue(town.Number, out var all)) fields[town.Number] = all = Fields(world, town.Number);
-                KeepFarmRound(world, c, cold, all, holder.Site, on);
-            }
+        if (given is { Count: 0 }) _given.Remove(id);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="job"/> is among <see cref="_wanted"/>.
+    /// </summary>
+    bool IsWanted(GivenJob job)
+    {
+        foreach (var (wanted, _) in _wanted)
+            if (wanted == job) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Whether the list holds a job of another mod's offered type (<paramref name="job"/>'s) on another building, one Fiefdom did not give.
+    /// </summary>
+    static bool HoldsOthers(CharacterCold cold, GivenJob job, List<GivenJob>? given)
+    {
+        if (JobOffers.Of((int)job.Type) is null) return false;
+
+        foreach (var j in cold.Jobs)
+        {
+            if (j.Type != job.Type || j.Site == job.Site) continue;
+            if (given is null || !given.Contains(new GivenJob(j.Type, j.Site ?? ""))) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Takes every job Fiefdom gave a townsperson off their list: on losing or leaving a post, becoming a guard or a food runner.
+    /// </summary>
+    void DropGiven(World world, ulong id)
+    {
+        if (!_given.Remove(id, out var given)) return;
+
+        var c = world.LastingIds.Find(new LastingId(id));
+        if (c.IsNone || !world.Characters.TryResolveNext(c, out int slot) || world.Characters.Cold(slot) is not { } cold) return;
+        foreach (var job in given) TakeGiven(world, c, cold, job);
+    }
+
+    /// <summary>
+    /// Townspeople holding no post who still have jobs Fiefdom gave (left a post, became a guard or a runner, were evicted): those jobs go.
+    /// </summary>
+    void DropLeftovers(World world)
+    {
+        if (_given.Count == 0) return;
+
+        foreach (ulong id in _given.Keys.Where(k => !_holders.ContainsKey(k)).ToList()) DropGiven(world, id);
+    }
+
+    /// <summary>
+    /// Whether the job list holds <paramref name="job"/>.
+    /// </summary>
+    static bool Has(CharacterCold cold, GivenJob job)
+    {
+        foreach (var j in cold.Jobs)
+            if (j.Type == job.Type && j.Site == job.Site) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Gives a job through the game's own command (the merchant's, which is Fiefdom's own, straight onto the list).
+    /// </summary>
+    void Give(World world, CharacterId c, CharacterCold cold, GivenJob job, TaskType order)
+    {
+        if (order == (TaskType)MerchantRow) GiveMerchantJob(cold, job.Site);
+        else _production!.Inputs(world, [new AddJob([c], order, job.Site) { Tick = world.Tick }]);
+    }
+
+    /// <summary>
+    /// Takes one job Fiefdom gave off the list through the production system's own command, stopping a merchant mid-trip first. A job the list no
+    /// longer holds (taken off by something else) is left alone.
+    /// </summary>
+    void TakeGiven(World world, CharacterId c, CharacterCold cold, GivenJob job)
+    {
+        if (job.Type == (TaskType)MerchantRow && cold.Running is { Row: (TaskType)MerchantRow } && world.Characters.TryResolveNext(c, out int slot))
+            TaskStart.End(world, slot, TaskEnd.Stopped);
+
+        for (int i = cold.Jobs.Count - 1; i >= 0; i--)
+        {
+            if (cold.Jobs[i].Type != job.Type || cold.Jobs[i].Site != job.Site) continue;
+            _production?.Inputs(world, [new RemoveJob(c, i) { Tick = world.Tick }]);
+            return;
         }
     }
 
-    #region Farm rounds
-
     /// <summary>
-    /// Whether a post's furniture is a farm field.
+    /// For a save from before Fiefdom tracked its jobs: every job a resident has on one of the town posts' buildings, of the kind Fiefdom gives
+    /// there (operating, a turret, a counter), is taken as Fiefdom's, which is what the old step assumed; the next steps then keep them as any
+    /// other. Runs once, on the first step after such a load.
     /// </summary>
-    static bool IsFarm(World world, string site) => world.Machines.Find(site)?.Farm is not null;
-
-    /// <summary>
-    /// The town's farm fields, in the town's post order.
-    /// </summary>
-    List<string> Fields(World world, int town) =>
-        [.. WorkPosts(world, town).Where(p => p.Kind == PostKind.Machine && IsFarm(world, p.Site.Id)).Select(p => p.Site.Id)];
-
-    /// <summary>
-    /// A farmer tends their own field first and, while on shift, every other field in town after it, as a player's farmer with several farm
-    /// jobs does: the job list runs the first job that has work, so a farmer whose field has nothing to plant or pick moves on to the next one
-    /// instead of standing idle. Off shift the other fields' jobs go with their own.
-    /// </summary>
-    void KeepFarmRound(World world, CharacterId c, CharacterCold cold, List<string> fields, string own, bool on)
+    void AdoptJobs(World world)
     {
-        foreach (string field in fields)
+        _adoptJobs = false;
+        var posts = new HashSet<GivenJob>();
+        foreach (var (town, _) in LiveTowns(world))
+            foreach (var post in PostsOf(world, town.Number))
+                if (post.Kind != PostKind.Offer) posts.Add(new GivenJob(post.Job, post.Site.Id));
+
+        var table = world.Characters;
+        foreach (var id in _residents.Keys)
         {
-            if (field == own) continue;
-            bool has = cold.Jobs.Any(j => j.Site == field);
-            if (on && !has) _production!.Inputs(world, [new AddJob([c], TaskType.OperateMachinery, field) { Tick = world.Tick }]);
-            else if (!on && has) TakeJob(world, c, cold, field);
+            var c = world.LastingIds.Find(new LastingId(id));
+            if (c.IsNone || !table.TryResolveNext(c, out int slot) || table.Cold(slot) is not { Jobs.Count: > 0 } cold) continue;
+            foreach (var j in cold.Jobs)
+                if (j.Site is { } site && posts.Contains(new GivenJob(j.Type, site))) Adopt(id, new GivenJob(j.Type, site));
         }
+
+        Log($"jobs taken as Fiefdom's from an older save: {_given.Values.Sum(g => g.Count)}");
+    }
+
+    /// <summary>
+    /// Counts a job already on a townsperson's list as one Fiefdom gave.
+    /// </summary>
+    void Adopt(ulong id, GivenJob job)
+    {
+        var given = _given.TryGetValue(id, out var list) ? list : _given[id] = [];
+        if (!given.Contains(job)) given.Add(job);
     }
 
     #endregion
-
-    /// <summary>
-    /// Takes a post's job off every resident who no longer works that post (taken off it, moved to another, or the line's hours changed), so no
-    /// resident keeps a job the mod gave them for a post they have left. Every 30 ticks.
-    /// </summary>
-    void DropStaleJobs(World world)
-    {
-        if (_production is null || world.Tick % 30 != 0) return;
-        var table = world.Characters;
-        HashSet<string>? posts = null;
-        foreach (var (id, r) in _residents)
-        {
-            var c = world.LastingIds.Find(new LastingId(id));
-            if (c.IsNone || !table.TryResolveNext(c, out int slot) || table.Cold(slot) is not { IsPlayer: true, Jobs.Count: > 0 } cold) continue;
-            posts ??= LiveTowns(world).SelectMany(t => WorkPosts(world, t.Town.Number)).Select(p => p.Site.Id).ToHashSet(StringComparer.Ordinal);
-            string? mine = _holders.TryGetValue(id, out var h) ? h.Site : null;
-            // A farmer's round of the other fields (KeepFarmRound) is theirs while they hold a field.
-            bool farmer = mine is not null && IsFarm(world, mine);
-            foreach (var site in cold.Jobs.Select(j => j.Site)
-                         .Where(s => s is not null && s != mine && posts.Contains(s) && !(farmer && IsFarm(world, s!))).Distinct().ToList())
-            {
-                TakeJob(world, c, cold, site!);
-                Log($"{r.Name}: dropped the job at {site} (no longer their post)");
-            }
-        }
-    }
-
-    /// <summary>
-    /// Takes every job on <paramref name="site"/> off the character's list, through the production system's own command.
-    /// </summary>
-    void TakeJob(World world, CharacterId c, CharacterCold cold, string site)
-    {
-        if (cold.Running is { Row: (TaskType)MerchantRow } && world.Characters.TryResolveNext(c, out int slot)) TaskStart.End(world, slot, TaskEnd.Stopped);
-        for (int i = cold.Jobs.Count - 1; i >= 0; i--)
-            if (cold.Jobs[i].Site == site) _production!.Inputs(world, [new RemoveJob(c, i) { Tick = world.Tick }]);
-    }
 
     /// <summary>
     /// A building's name, or "building" when it is gone.

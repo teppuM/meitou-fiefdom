@@ -37,7 +37,9 @@ A code mod for [MeitouClient](https://meitou.kenshi.wiki) that turns one of your
 
 - The **Work** tab lists every kind of work in town, building by building. Give a line its hours: Day and night, Day only, Night only, or Two shifts. Then put residents on it with plus and minus.
 - Workers get the game's own job for their post while on shift, and step away to eat when hungry.
-- A farmer tends their own field first, then any other field in town that needs work, so nobody stands idle while a field waits.
+- A worker tends their own machine first, then any other machine of the same kind in town that needs work (any field for a farmer), so nobody stands idle while a machine waits.
+- Other mods' jobs show up too: a job another mod lets you give from a building's right-click menu gets its own line on that building, and your residents work it like any other post.
+- Fiefdom only ever takes away the jobs it gave, so a job another mod gives one of your townspeople stays.
 - Wages are paid at each day change, per shift worked, from your money into the worker's home purse. Unpaid workers stop, and leave after three unpaid days.
 - Residents without a post earn a small outside income instead.
 - A resident on a **shop counter** becomes its merchant. They carry goods from town-stock boxes to the counter, never the town's last meals, and the game's own shoppers buy from it. The takings are yours. You choose what kinds of goods each counter sells.
