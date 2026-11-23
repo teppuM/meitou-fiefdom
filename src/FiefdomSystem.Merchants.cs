@@ -145,8 +145,43 @@ public sealed partial class FiefdomSystem : IChooserOwner
     int FoodReserve(string key) => FiefdomSettings.Current.FoodKeptPerResident * ResidentsOf(key);
 
     /// <summary>
-    /// Finds, for every merchant's counter, a town-stock box holding goods the counter sells and has room for (food only above the town's
-    /// reserve). Run in the serial step; the job's checks read the result.
+    /// How many times over town stock keeps what fills each machine's inputs: once for the fill an operator is carrying, once for the next.
+    /// </summary>
+    const int MachineFillsKept = 2;
+
+    /// <summary>
+    /// How many of each item a town's own machines keep back in town stock: two fills of every input each complete machine of the player's in
+    /// the town takes now (a farm's water, a mill's grain, an oven's flour and water, the ingredients of a bench's current craft), so the
+    /// machines are not left empty by a merchant. Read from the machines themselves, so other mods' machines count by themselves.
+    /// </summary>
+    Dictionary<string, int> MachineNeeds(World world, int town)
+    {
+        var needs = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var m in world.Machines.All)
+        {
+            if (m.Inputs.Length == 0) continue;
+            if (world.Buildings.Find(m.Site) is not { Complete: true } site || site.Owner != world.Player.Faction || TownOf(world, site) != town) continue;
+
+            foreach (var input in m.Inputs)
+            {
+                if (input.Idle || string.IsNullOrEmpty(input.Item)) continue;
+
+                needs[input.Item] = needs.GetValueOrDefault(input.Item) + MachineFillsKept * input.Recipe.Capacity;
+            }
+        }
+
+        return needs;
+    }
+
+    /// <summary>
+    /// The reserve of a town's stock: meals for its residents, first aid kits for its guards, and what its machines use.
+    /// </summary>
+    TownReserve ReserveOf(World world, int town, string key, IEnumerable<(BuildSite Site, Inventory Stock)> boxes) =>
+        new(boxes.Select(b => b.Stock), FoodReserve(key), KitReserve(key), MachineNeeds(world, town));
+
+    /// <summary>
+    /// Finds, for every merchant's counter, a town-stock box holding goods the counter sells and has room for, above the town's reserve. Run in
+    /// the serial step; the job's checks read the result.
     /// </summary>
     void PlanRestocks(World world)
     {
@@ -154,19 +189,18 @@ public sealed partial class FiefdomSystem : IChooserOwner
         foreach (var (town, state) in LiveTowns(world))
         {
             List<(BuildSite Site, Inventory Stock)>? boxes = null;
-            int food = -1, kits = -1;
+            TownReserve? reserve = null;
             foreach (var holder in _holders.Values)
             {
                 if (holder.Town != state.Key || _restockFrom.ContainsKey(holder.Site)) continue;
                 if (world.Machines.Find(holder.Site) is not { Data.Function: ShopCounterFunction, Storage: { } counter }) continue;
 
                 boxes ??= [.. TownStock(world, town.Number)];
-                if (food < 0) food = boxes.Sum(b => b.Stock.Items.Where(i => i.IsFood).Sum(i => i.Quantity)) - FoodReserve(state.Key);
-                if (kits < 0) kits = boxes.Sum(b => b.Stock.Items.Where(IsFirstAidKit).Sum(i => i.Quantity)) - KitReserve(state.Key);
+                reserve ??= ReserveOf(world, town.Number, state.Key, boxes);
                 var sells = SellsAt(holder.Site);
                 foreach (var (site, stock) in boxes)
                 {
-                    if (stock.Items.Any(i => Wanted(i, sells, food, kits) && counter.HasRoomFor(i)))
+                    if (stock.Items.Any(i => Wanted(i, sells, reserve) && counter.HasRoomFor(i)))
                     {
                         _restockFrom[holder.Site] = site.Id;
                         break;
@@ -177,10 +211,9 @@ public sealed partial class FiefdomSystem : IChooserOwner
     }
 
     /// <summary>
-    /// Whether an item is one the counter sells, food only while the town has food above its reserve.
+    /// Whether an item is one the counter sells and some of it is above the town's reserve.
     /// </summary>
-    static bool Wanted(ItemInstance item, Goods sells, int spareFood, int spareKits) =>
-        (KindOf(item) & sells) != 0 && (!item.IsFood || spareFood > 0) && (!IsFirstAidKit(item) || spareKits > 0);
+    static bool Wanted(ItemInstance item, Goods sells, TownReserve reserve) => (KindOf(item) & sells) != 0 && reserve.Spare(item) > 0;
 
     /// <summary>
     /// Gives a merchant on shift their counter's job (a mod job: the jobs list names it), or takes it away off shift.
@@ -241,41 +274,34 @@ public sealed partial class FiefdomSystem : IChooserOwner
                 {
                     // Only what the merchant took from town stock, even of a kind the counter no longer sells: it is the town's.
                     int units = Math.Min(item.Quantity, CarriedUnits(id, item.Record));
-                    if (units <= 0) continue;
-                    var part = units == item.Quantity ? item : item.WithQuantity(units);
-                    if (!counter.HasRoomFor(part)) continue;
-                    if (part == item) inv.Remove(item);
-                    else item.Quantity -= units;
-                    counter.Add(part);
-                    Carry(id, part.Record, -units);
-                    moved += units;
+                    if (units <= 0 || !counter.HasRoomFor(item)) continue;
+
+                    int put = ItemMoves.Move(inv, item, units, counter, null);
+                    Carry(id, item.Record, -put);
+                    moved += put;
                 }
                 if (moved > 0) world.Machines.Touch();
                 Log($"{_residents.GetValueOrDefault(id)?.Name}: put {moved} on the counter {target}; counter now {Contents(counter)}; still carrying {Contents(inv, Carried)}");
             }
             else if (world.Machines.Find(target)?.Storage is { } box && world.Machines.Find(holder.Site)?.Storage is { } counterRoom)
             {
-                int spare = TownStock(world, TownOf(world, site)).Sum(b => b.Stock.Items.Where(i => i.IsFood).Sum(i => i.Quantity)) - FoodReserve(holder.Town);
-                int spareKits = TownStock(world, TownOf(world, site)).Sum(b => b.Stock.Items.Where(IsFirstAidKit).Sum(i => i.Quantity)) - KitReserve(holder.Town);
+                int town = TownOf(world, site);
+                var reserve = ReserveOf(world, town, holder.Town, TownStock(world, town));
                 int taken = 0;
                 foreach (var item in box.Items.ToList())
                 {
-                    if (!Wanted(item, sells, spare, spareKits)) continue;
+                    if (!Wanted(item, sells, reserve)) continue;
 
-                    // Food and first aid kits leave only down to their reserves: a stack larger than what is spare is split.
-                    int units = item.IsFood ? Math.Min(item.Quantity, spare) : IsFirstAidKit(item) ? Math.Min(item.Quantity, spareKits) : item.Quantity;
-                    var part = units == item.Quantity ? item : item.WithQuantity(units);
-                    if (!counterRoom.HasRoomFor(part) || !inv.HasRoomIn(Carried, part)) continue;
-                    if (part == item) box.Remove(item);
-                    else item.Quantity -= units;
-                    inv.AddTo(Carried, part);
-                    Carry(id, part.Record, units);
+                    // Goods leave only down to the town's reserve, and only as many as the merchant can carry.
+                    if (!counterRoom.HasRoomFor(item) || !inv.HasRoomIn(Carried, item)) continue;
+
+                    int units = ItemMoves.Move(box, item, reserve.Spare(item), inv, Carried);
+                    Carry(id, item.Record, units);
                     taken += units;
-                    if (part.IsFood) spare -= units;
-                    if (IsFirstAidKit(part)) spareKits -= units;
+                    reserve.Took(item, units);
                 }
                 if (taken > 0) world.Machines.Touch();
-                Log($"{_residents.GetValueOrDefault(id)?.Name}: took {taken} from town stock {target} for {holder.Site}; box now {Contents(box)}; carrying {Contents(inv, Carried)}; food above reserve {spare}");
+                Log($"{_residents.GetValueOrDefault(id)?.Name}: took {taken} from town stock {target} for {holder.Site}; box now {Contents(box)}; carrying {Contents(inv, Carried)}; food above reserve {reserve.SpareFood}");
             }
 
             _trips.Remove(id);

@@ -63,7 +63,7 @@ public sealed partial class FiefdomSystem
     /// <summary>
     /// Whether an item is a first aid kit (the game's item function 1).
     /// </summary>
-    static bool IsFirstAidKit(ItemInstance item) => item.ItemFunction == ItemInfo.FirstAidKitFunction;
+    static bool IsFirstAidKit(ItemInstance item) => TownReserve.IsFirstAidKit(item);
 
     /// <summary>
     /// The first aid kits a town keeps in stock for its guards: two for each guard (a basic kit is used up after a patient or two).

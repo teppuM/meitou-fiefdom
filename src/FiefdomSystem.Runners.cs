@@ -212,13 +212,10 @@ public sealed partial class FiefdomSystem
                 foreach (var item in meals)
                 {
                     if (taken >= want) break;
-                    int units = Math.Min(item.Quantity, want - taken);
-                    var part = units == item.Quantity ? item : item.WithQuantity(units);
-                    if (!inv.HasRoomIn(Carried, part)) continue;
-                    if (part == item) stock.Remove(item);
-                    else item.Quantity -= units;
-                    inv.AddTo(Carried, part);
-                    Carry(id, part.Record, units);
+                    if (!inv.HasRoomIn(Carried, item)) continue;
+
+                    int units = ItemMoves.Move(stock, item, want - taken, inv, Carried);
+                    Carry(id, item.Record, units);
                     taken += units;
                 }
                 if (taken > 0) world.Machines.Touch();
