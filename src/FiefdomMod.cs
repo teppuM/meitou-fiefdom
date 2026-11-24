@@ -21,6 +21,9 @@ public sealed class FiefdomMod : IMod
         FiefdomSystem.RollPurpose = context.RngPurpose;
         context.AddSettings(FiefdomSettings.Current);
         Placement.Register(context);
+        context.Log(GuardOptions.Available
+            ? "guard squads get their own squad options"
+            : "this game has no per-squad options: guards follow the player's AI tab");
         SortBuildings(context.Data);
         string settlers = SettlerData.Load(context.Data, context.Log);
         context.AddJobType((Meitou.Data.Gameplay.Ai.TaskType)FiefdomSystem.MerchantRow, "Keeping a shop counter");

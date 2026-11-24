@@ -149,10 +149,29 @@ public sealed partial class FiefdomSystem
             {
                 house.Squad = squad;
                 house.Members = LivingIn(world, squad);
+                GiveGuardOptions(world, squad);
             }
             houses.Add(house);
         }
         return houses;
+    }
+
+    /// <summary>
+    /// Guard squads already sent their own squad AI options this session (the command lands on the next tick, so the squad still reads as
+    /// unset until then).
+    /// </summary>
+    readonly HashSet<int> _guardOptionsSent = [];
+
+    /// <summary>
+    /// Gives a guard squad the guards' own squad AI options (<see cref="GuardOptions"/>) once, if it has none and this game has them.
+    /// </summary>
+    void GiveGuardOptions(World world, Squad squad)
+    {
+        if (_player is null || !GuardOptions.Unset(squad) || !_guardOptionsSent.Add(squad.Id)) return;
+        if (GuardOptions.Command(squad.Id, ModId, world.Tick) is not { } command) return;
+
+        _player.Inputs(world, [command]);
+        Log($"guard squad {squad.Id}: given the guards' own squad options (no sitting, no sleeping in residents' beds, no hauling to storage)");
     }
 
     /// <summary>
@@ -186,6 +205,7 @@ public sealed partial class FiefdomSystem
         ai.Add(new SetSquadHome(squad.Id, house.Site.Id) { Tick = world.Tick });
         _ai.Inputs(world, ai);
         _player.Inputs(world, [new SetSquadUncounted(squad.Id, true, ModId) { Tick = world.Tick }, new SetSquadPurse(squad.Id, true, ModId) { Tick = world.Tick }]);
+        GiveGuardOptions(world, squad);
         house.Squad = squad;
         house.Members = 0;
         Log($"{town.Name}: guard squad {squad.Id} made for the {house.Site.Name} ({house.Site.Id}), {(house.Gate ? "gates" : "patrol")}");

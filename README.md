@@ -12,6 +12,7 @@ A code mod for [MeitouClient](https://meitou.kenshi.wiki) that turns one of your
 
 - Hover over one of your outposts and its panel (bottom right) gets a **Fiefdom** line. Press **Make a town**, then **Town window** to run it.
 - A building's job comes from its furniture, not a label. Every machine people work, every gun turret and every shop counter is a work post. Furniture other mods add counts the same way.
+- Furniture the game keeps indoors (shop counters, beds, ovens, benches, other mods' furniture too) may also stand outdoors inside a Fiefdom town, with the MeitouClient nightly of 2026-11-24 or later.
 - A house gets two buttons on its own panel:
   - **Lives here** cycles between Residents, Guards and Nobody. One person lives there per bed.
   - **Boxes inside** switches between All town stock and As marked.
@@ -52,6 +53,7 @@ A code mod for [MeitouClient](https://meitou.kenshi.wiki) that turns one of your
 - Guards fight anyone hostile without leaving town.
 - Guards carrying a first aid kit bandage anyone of yours in town who needs it, themselves included, and get out of bed to do it. A guard without a kit fetches one from town stock, and merchants leave two kits per guard there.
 - Guards earn a daily wage, and leave after three unpaid days.
+- Guards keep to their duty whatever your AI tab says: they don't sit on residents' chairs, go to bed in residents' beds when hurt, or haul what they carry into the town's storage (with the MeitouClient nightly of 2026-11-24 or later).
 
 ### Town life
 
