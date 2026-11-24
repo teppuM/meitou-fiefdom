@@ -987,7 +987,7 @@ public sealed partial class FiefdomSystem
         long money = (100 + Rng.Int(Rng.Hash(world.Seed, (ulong)serial, RollPurpose, 0x3011), 300)) * (long)chosen.Template.MinSize;
         bool hurry = _hurry.Remove(state.Key);
         float near = hurry ? HurryNear : SpawnNear, far = hurry ? HurryFar : SpawnFar;
-        int id = _population!.SpawnPlatoon(world, chosen.Faction, chosen.Template.TemplateId, NearestSite(centre), centre, town.Radius + near,
+        int id = Spawns.Platoon(_population!, world, chosen.Faction, chosen.Template.TemplateId, NearestSite(centre), centre, town.Radius + near,
             town.Radius + far, money);
         if (id < 0 || world.Platoons.Find(id) is not { } p)
         {
