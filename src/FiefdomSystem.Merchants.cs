@@ -198,7 +198,7 @@ public sealed partial class FiefdomSystem : IChooserOwner
                 var sells = SellsAt(holder.Site);
                 foreach (var (site, stock) in boxes)
                 {
-                    if (stock.Items.Any(i => Wanted(i, sells, reserve) && counter.HasRoomFor(i)))
+                    if (stock.Items.Any(i => Wanted(i, sells, reserve) && counter.HasRoomIn("main", i)))
                     {
                         _restockFrom[holder.Site] = site.Id;
                         break;
@@ -272,7 +272,7 @@ public sealed partial class FiefdomSystem : IChooserOwner
                 {
                     // Only what the merchant took from town stock, even of a kind the counter no longer sells: it is the town's.
                     int units = Math.Min(item.Quantity, CarriedUnits(id, item.Record));
-                    if (units <= 0 || !counter.HasRoomFor(item)) continue;
+                    if (units <= 0 || !counter.HasRoomIn("main", item)) continue;
 
                     int put = ItemMoves.Move(inv, item, units, counter, null);
                     Carry(id, item.Record, -put);
@@ -291,7 +291,7 @@ public sealed partial class FiefdomSystem : IChooserOwner
                     if (!Wanted(item, sells, reserve)) continue;
 
                     // Goods leave only down to the town's reserve, and only as many as the merchant can carry.
-                    if (!counterRoom.HasRoomFor(item) || !inv.HasRoomIn(Carried, item)) continue;
+                    if (!counterRoom.HasRoomIn("main", item) || !inv.HasRoomIn(Carried, item)) continue;
 
                     int units = ItemMoves.Move(box, item, reserve.Spare(item), inv, Carried);
                     Carry(id, item.Record, units);

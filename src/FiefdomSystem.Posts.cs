@@ -569,7 +569,7 @@ public sealed partial class FiefdomSystem
         {
             int added = 0;
             for (int i = 0; i < fill.Count; i++)
-                if (_data.Items.Create(fill.Record, 1) is { } item && stock.HasRoomFor(item) && stock.Add(item)) added++;
+                if (_data.Items.Create(fill.Record, 1) is { } item && stock.HasRoomIn("main", item) && stock.Add(item)) added++;
             world.Machines.Touch();
             Log($"{town.Name}: put {added} of {fill.Record} in town stock {site.Name} ({site.Id}) (testing)");
             return;
