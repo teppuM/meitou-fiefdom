@@ -129,7 +129,7 @@ public sealed partial class FiefdomSystem
     /// <summary>
     /// The building function of a shop counter (the game's player shops look for it inside a building).
     /// </summary>
-    const int ShopCounterFunction = 9;
+    public const int ShopCounterFunction = 9;
 
     /// <summary>
     /// A worker below this hunger leaves the job to eat (the game's own "hungry" line in dialogue), and goes back once at or above
@@ -266,11 +266,13 @@ public sealed partial class FiefdomSystem
     }
 
     /// <summary>
-    /// A post's line of work: the building it stands in (or none, outside) and the furniture's name, so the same furniture in one building is one
-    /// line on the work list; another mod's job on it is a line of its own, named with the job's caption.
+    /// A post's line of work: each shop counter is its own line (<see cref="ShopLine"/> + its building id) so every shop has its own category,
+    /// surplus setting and merchant; other furniture of the same kind in one building shares a line; another mod's job on it is a line of its own.
     /// </summary>
     static string LineOf(BuildSite site, int offer = 0) =>
-        offer != 0 ? $"{site.Parent ?? ""}|{site.Name}: {CaptionOf(offer)}" : $"{site.Parent ?? ""}|{site.Name}";
+        offer != 0 ? $"{site.Parent ?? ""}|{site.Name}: {CaptionOf(offer)}"
+        : CounterRecords.Contains(site.Record) ? ShopLine + site.Id
+        : $"{site.Parent ?? ""}|{site.Name}";
 
     /// <summary>
     /// An offered job's caption, or its number when no mod offers it any more (its holders lose the post at the next step).
@@ -569,7 +571,7 @@ public sealed partial class FiefdomSystem
         {
             int added = 0;
             for (int i = 0; i < fill.Count; i++)
-                if (_data.Items.Create(fill.Record, 1) is { } item && stock.HasRoomFor(item) && stock.Add(item)) added++;
+                if (_data.Items.Create(fill.Record, 1) is { } item && stock.HasRoomIn("main", item) && stock.Add(item)) added++;
             world.Machines.Touch();
             Log($"{town.Name}: put {added} of {fill.Record} in town stock {site.Name} ({site.Id}) (testing)");
             return;

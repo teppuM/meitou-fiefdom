@@ -9,6 +9,7 @@ using Meitou.Simulation.Construction;
 using Meitou.Simulation.Player;
 using Meitou.Simulation.Population;
 using Meitou.Simulation.Production;
+using Meitou.Simulation.Trading;
 
 namespace Fiefdom;
 
@@ -65,9 +66,9 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
 
     /// <summary>
     /// The save data's format number (1: purposes and marks; 2: also towns, groups, residents and the serial counter; 3: also the day residents
-    /// were last paid, who is starving since when, and each town's hungry leavings; 4: rules in place of purposes, what each counter sells and the residents' posts; 5: also the goods each merchant carries for their counter; 6: also each line's hours and each worker's pay record; 7: also the food runners and each town's policies; 8: also when visitors are next due and which groups visit; 9: also whether visitors have shopped; 10: also each post's offered job and the jobs Fiefdom gave each townsperson; 11: also what each merchant is owed of the takings and what each town's merchants kept today).
+    /// were last paid, who is starving since when, and each town's hungry leavings; 4: rules in place of purposes, what each counter sells and the residents' posts; 5: also the goods each merchant carries for their counter; 6: also each line's hours and each worker's pay record; 7: also the food runners and each town's policies; 8: also when visitors are next due and which groups visit; 9: also whether visitors have shopped; 10: also each post's offered job and the jobs Fiefdom gave each townsperson; 11: also what each merchant is owed of the takings and what each town's merchants kept today; 12: also per-counter merchant shop state, trickle timers, BuySurplus flag and player sales cut today; 13: also whether each resident came from the player's squad).
     /// </summary>
-    const int SaveVersion = 11;
+    const int SaveVersion = 13;
 
     /// <summary>
     /// How often, in ticks, the view is rebuilt when nothing the system knows of has changed.
@@ -94,6 +95,11 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
     /// The BUILDING records that are storage (the game's own storage functions, with an inventory).
     /// </summary>
     public static IReadOnlySet<string> StorageRecords { get; set; } = new HashSet<string>();
+
+    /// <summary>
+    /// The BUILDING records that are shop counters (function 9).
+    /// </summary>
+    public static IReadOnlySet<string> CounterRecords { get; set; } = new HashSet<string>();
 
     /// <summary>
     /// Each building's rules, by building id (only buildings with some).
@@ -145,6 +151,7 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
     readonly AggroSystem? _aggro;
     readonly ConstructionSystem? _construction;
     readonly ProductionSystem? _production;
+    readonly TradeSystem? _trade;
 
     /// <summary>
     /// A system for one world.
@@ -158,6 +165,7 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
         _aggro = context.Find<AggroSystem>();
         _construction = context.Find<ConstructionSystem>();
         _production = context.Find<ProductionSystem>();
+        _trade = context.Find<TradeSystem>();
         JobOffers.Bind(_player);
     }
 
@@ -396,6 +404,8 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
     {
         foreach (string id in _rules.Keys.Where(id => world.Buildings.Find(id) is null).ToList()) _rules.Remove(id);
         foreach (string id in _marks.Keys.Where(id => world.Buildings.Find(id) is null).ToList()) _marks.Remove(id);
+        foreach (string id in _shops.Keys.Where(id => world.Buildings.Find(id) is null).ToList()) _shops.Remove(id);
+        foreach (string id in _sells.Keys.Where(id => world.Buildings.Find(id) is null).ToList()) _sells.Remove(id);
     }
 
     #endregion
@@ -450,6 +460,7 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
             w.Write(r.Home);
             w.Write(r.Since);
             w.Write(r.Name);
+            w.Write(r.FromPlayer);
         }
         w.Write(_paidDay);
         w.Write(_starvingSince.Count);
@@ -526,6 +537,20 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
             w.Write(key);
             w.Write(cats);
         }
+        w.Write(_shops.Count);
+        foreach (var (id, shop) in _shops)
+        {
+            w.Write(id);
+            w.Write(shop.BuySurplus);
+            w.Write(shop.NextTrickle);
+            w.Write(shop.TrickleSeq);
+        }
+        w.Write(_playerCutToday.Count);
+        foreach (var (key, cats) in _playerCutToday)
+        {
+            w.Write(key);
+            w.Write(cats);
+        }
     }
 
     /// <summary>
@@ -551,6 +576,8 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
         _given.Clear();
         _shareOwed.Clear();
         _sharesToday.Clear();
+        _shops.Clear();
+        _playerCutToday.Clear();
         _adoptJobs = false;
         _paidDay = -1;
         _serial = 0;
@@ -581,7 +608,7 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
                 _groups[group.Serial] = group;
             }
             for (int n = r.ReadInt32(); n > 0; n--)
-                _residents[r.ReadUInt64()] = new Resident(r.ReadString(), r.ReadString(), r.ReadDouble(), r.ReadString());
+                _residents[r.ReadUInt64()] = new Resident(r.ReadString(), r.ReadString(), r.ReadDouble(), r.ReadString(), version >= 13 && r.ReadBoolean());
         }
         if (version >= 3)
         {
@@ -614,6 +641,12 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
         {
             for (int n = r.ReadInt32(); n > 0; n--) _shareOwed[r.ReadUInt64()] = r.ReadInt64();
             for (int n = r.ReadInt32(); n > 0; n--) _sharesToday[r.ReadString()] = r.ReadInt64();
+        }
+        if (version >= 12)
+        {
+            for (int n = r.ReadInt32(); n > 0; n--)
+                _shops[r.ReadString()] = new ShopState { BuySurplus = r.ReadBoolean(), NextTrickle = r.ReadDouble(), TrickleSeq = r.ReadInt32() };
+            for (int n = r.ReadInt32(); n > 0; n--) _playerCutToday[r.ReadString()] = r.ReadInt64();
         }
         _dirty = true;
     }
@@ -662,6 +695,7 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
         {
             hasher.Add(id);
             hasher.Add(Rng.StableHash(r.Home));
+            hasher.Add(r.FromPlayer);
         }
         hasher.Add(_paidDay);
         foreach (var (id, since) in _starvingSince)
@@ -719,6 +753,18 @@ public sealed partial class FiefdomSystem : ITickSystem, IModSaveData, IWorldRea
         {
             hasher.Add(Rng.StableHash(key));
             hasher.Add(cats + 600);
+        }
+        foreach (var (id, shop) in _shops)
+        {
+            hasher.Add(Rng.StableHash(id));
+            hasher.Add(shop.BuySurplus);
+            hasher.Add(double.IsNaN(shop.NextTrickle) ? -1.0 : shop.NextTrickle);
+            hasher.Add(shop.TrickleSeq + 700);
+        }
+        foreach (var (key, cats) in _playerCutToday)
+        {
+            hasher.Add(Rng.StableHash(key));
+            hasher.Add(cats + 800);
         }
     }
 

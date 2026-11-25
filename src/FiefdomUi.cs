@@ -172,6 +172,7 @@ sealed class FiefdomUi : IUiExtension
         var view = FiefdomSystem.View;
         if (!building.Owned || building.SiteId is not { } site || !view.SiteTown.ContainsKey(site)) return [];
 
+        if (view.Shops.TryGetValue(site, out var shop)) return [ShopButton(shop)];
         if (view.Marks.TryGetValue(site, out var mark)) return [MarkButton(context, site, mark)];
         if (building.Record is not { } record || !FiefdomSystem.RuleRecords.Contains(record)) return [];
 
@@ -194,6 +195,23 @@ sealed class FiefdomUi : IUiExtension
                     : "Each storage box inside keeps its own mark. Press to make every box inside town stock.",
                 () => context.Enqueue(new SetRule(site, BuildingRule.TownStock, !stock) { Tick = context.Tick })),
         ];
+    }
+
+    /// <summary>
+    /// The shop counter button: shows what this counter sells and who runs it, and opens the Fiefdom window straight to this counter's shop sheet.
+    /// </summary>
+    static UiBuildingAction ShopButton(CounterShopView shop)
+    {
+        string who = shop.MerchantName is { } name ? $"{name}, {shop.Purse:N0} cats" : "no merchant";
+        string caption = $"Shop: {FiefdomSystem.GoodsSummary(shop.Sells)} ({who})";
+        const string tip = "Open this shop counter's settings: choose what it sells, whether it buys town surplus, and assign its merchant.";
+        return new UiBuildingAction(caption, tip, () =>
+        {
+            s_window = new Window(shop.Town);
+            s_tab = 4;
+            s_line = FiefdomSystem.ShopLine + shop.Site;
+            s_picking = false;
+        });
     }
 
     /// <summary>
@@ -230,6 +248,11 @@ sealed class FiefdomUi : IUiExtension
         {
             var who = new Confirm(target.Id, target.Name, homeTown.Name);
             rows.Add(new UiMenuVerb("Evict from town", () => s_confirm = who));
+            if (view.Reclaimable.Contains(target.Id))
+            {
+                var rid = target.Id;
+                rows.Add(new UiMenuVerb("Rejoin squad", () => Send(new ReclaimResident(rid) { Tick = 0 })));
+            }
         }
 
         var at = new Vector2(target.Position.X, target.Position.Z);
@@ -239,6 +262,8 @@ sealed class FiefdomUi : IUiExtension
 
             int town = area.Town;
             var id = target.Id;
+            if (!view.Residents.ContainsKey(id) && !target.Animal)
+                rows.Add(new UiMenuVerb("Settle in town", () => Send(new SettleMember(town, id) { Tick = 0 })));
             bool steward = view.Details.TryGetValue(town, out var detail) && detail.StewardId == id;
             rows.Add(steward
                 ? new UiMenuVerb("Stop being steward", () => Send(new AppointSteward(town, CharacterId.None) { Tick = 0 }))
@@ -399,6 +424,12 @@ sealed class FiefdomUi : IUiExtension
                 break;
             case "sells" when town is not null && LineNamed(town) is { } counters:
                 foreach (var site in counters.Sites) Send(new SetSells(site, counters.Sells ^ (Goods)Number(value)) { Tick = 0 });
+                break;
+            case "buy-surplus" when town is not null && LineNamed(town) is { } shopLine && shopLine.Sites.Count > 0:
+                Send(new SetBuySurplus(shopLine.Sites[0], !shopLine.BuySurplus) { Tick = 0 });
+                break;
+            case "reclaim" when town is not null && Pick(town.People, Number(value)) is { FromPlayer: true } settled:
+                Send(new ReclaimResident(settled.Id) { Tick = 0 });
                 break;
         }
     }
@@ -563,7 +594,11 @@ sealed class FiefdomUi : IUiExtension
             for (int i = s_peoplePage * PeoplePerPage; i < Math.Min(town.People.Count, (s_peoplePage + 1) * PeoplePerPage); i++)
             {
                 var person = town.People[i];
-                sheet.Line($"res-person-{i}", person.Post.Length > 0 ? $"   {person.Name}: {person.Post}" : $"   {person.Name}: no post");
+                string label = person.Post.Length > 0 ? $"   {person.Name}: {person.Post}" : $"   {person.Name}: no post";
+                if (person.FromPlayer)
+                    sheet.Cells(($"res-person-{i}", label, null, 6.2f, false), ($"res-reclaim-{i}", "Rejoin squad", $"reclaim:{i}", 1.8f, false));
+                else
+                    sheet.Line($"res-person-{i}", label);
             }
             if (pages > 1)
                 sheet.Buttons(("people-prev", "Previous page", "people-page:-1", false), ("people-pages", $"Page {s_peoplePage + 1} of {pages}", "people-page:0", false),
@@ -610,7 +645,7 @@ sealed class FiefdomUi : IUiExtension
         string bill = town.LastPaid > 0 || town.LastUnpaid > 0
             ? $" Last day change: {town.LastPaid} cats paid{(town.LastUnpaid > 0 ? $", {town.LastUnpaid} went unpaid" : "")}." : "";
         sheet.Line("work-wage", $"Wage: {FiefdomSettings.Current.WagePerShift} cats a shift worked, guards {FiefdomSettings.Current.GuardWagePerDay} a day, from your money.{bill}", note: true);
-        sheet.Line("work-share", $"Merchants take no wage: they keep {FiefdomSettings.Current.MerchantSharePercent}% of what their counter takes, and the rest is yours.", note: true);
+        sheet.Line("work-share", $"Merchants take no wage: they run their own shop (15% discount for you, {FiefdomSettings.Current.PlayerSalesCutPercent}% of visitor sales paid to you).", note: true);
         sheet.Line("work-how", $"Day {FiefdomSystem.DayShiftStarts}:00 to {FiefdomSystem.NightShiftStarts}:00, night the rest. Workers step away to eat when hungry.", note: true);
         if (town.Unposted.Count > 0)
             sheet.Buttons(("work-all", "Show all", "work-filter:0", !s_openOnly, true), ("work-open", "Places open", "work-filter:1", s_openOnly, true),
@@ -678,8 +713,13 @@ sealed class FiefdomUi : IUiExtension
         }
         if (line.Kind == PostKind.Counter)
         {
-            sheet.Line("people-sells", "Sells:", note: true);
+            sheet.Line("people-shop-status", $"Shop purse: {line.Purse:N0} cats   |   Stock: {line.StockCount} stack{(line.StockCount == 1 ? "" : "s")}", note: true);
+            sheet.Line("people-sells", "Sells (changing wipes current stock; new goods trickle in slowly):", note: true);
             SellsRows(sheet, line.Sells);
+            sheet.Buttons(("people-buy-surplus", line.BuySurplus ? "Buy town surplus: On" : "Buy town surplus: Off", "buy-surplus", line.BuySurplus, true));
+            sheet.Line("people-surplus-note", line.BuySurplus
+                ? $"Buys excess matching goods from Town stock at {FiefdomSettings.Current.MerchantWholesalePercent}% wholesale to resell to visitors."
+                : "Off: stocks only from outside and never touches your town stock.", note: true);
         }
         sheet.Buttons(("people-back", "Back to all work", "people-back", false));
     }
@@ -763,7 +803,7 @@ sealed class FiefdomUi : IUiExtension
     /// </summary>
     static void SellsRows(Sheet sheet, Goods sells)
     {
-        Goods[] kinds = [Goods.Food, Goods.Medicine, Goods.Drugs, Goods.Weapons, Goods.Armour, Goods.Bags, Goods.Other];
+        Goods[] kinds = [Goods.Food, Goods.Medicine, Goods.Drugs, Goods.Weapons, Goods.Armour, Goods.Bags, Goods.Robotics, Goods.Other];
         var buttons = kinds.Select(k => ($"people-sells-{(int)k}", GoodsName(k), $"sells:{(int)k}", (sells & k) != 0, true)).ToArray();
         sheet.Buttons(buttons[..4]);
         sheet.Buttons(buttons[4..]);
@@ -779,6 +819,7 @@ sealed class FiefdomUi : IUiExtension
         Goods.Weapons => "weapons",
         Goods.Armour => "armor",
         Goods.Bags => "bags",
+        Goods.Robotics => "robotics",
         Goods.Other => "other goods",
         _ => "food",
     };

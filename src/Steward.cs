@@ -16,12 +16,14 @@ namespace Fiefdom;
 /// <param name="BringsSkill">Whether one of them is better at a trade than every resident (always true while the town has no residents).</param>
 /// <param name="Purse">The group's money.</param>
 public sealed record Applicants(int Size, int FreeBeds, int Room, IReadOnlyList<string> BlockedRaces, IReadOnlyList<string> Harmed,
-    long MoneyPerHead, bool Armed, bool BringsSkill, long Purse)
+    long MoneyPerHead, bool Armed, bool BringsSkill, long Purse, int BedsNeeded, bool HasHome)
 {
     /// <summary>
-    /// Why the hard rules (beds, cap) refuse them, or null when they allow it. Nobody, steward or player, takes in more than the beds and cap.
+    /// Why the hard rules (homes, beds, cap) refuse them, or null when they allow it. Nobody, steward or player, takes in more than the beds and cap;
+    /// robotic races need a home and room under the cap, not a bed.
     /// </summary>
-    public string? HardRefusal => Size > FreeBeds ? (FreeBeds == 0 ? "no free bed" : $"only {FreeBeds} free bed{(FreeBeds == 1 ? "" : "s")} for {Size}")
+    public string? HardRefusal => !HasHome ? "no home for residents"
+        : BedsNeeded > FreeBeds ? (FreeBeds == 0 ? "no free bed" : $"only {FreeBeds} free bed{(FreeBeds == 1 ? "" : "s")} for {BedsNeeded}")
         : Size > Room ? "the town is at its cap" : null;
 
     /// <summary>

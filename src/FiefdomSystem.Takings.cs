@@ -5,47 +5,30 @@ namespace Fiefdom;
 
 public sealed partial class FiefdomSystem : ITradeObserver
 {
-    #region The merchants' share of takings
+    #region Merchant sales cuts
 
     /// <summary>
-    /// What each merchant is owed of the takings at their counter and not yet paid, in hundredths of a cat, by lasting id (saved).
+    /// Legacy format 11 owed shares (kept for save-load compatibility with older saves; new merchant sales pay the player's cut directly).
     /// </summary>
     readonly SortedDictionary<ulong, long> _shareOwed = [];
 
     /// <summary>
-    /// What each town's merchants have kept of the takings since the last day change, by town key (for the news only, not saved).
+    /// Legacy format 11 daily merchant shares (kept for save-load compatibility).
     /// </summary>
     readonly SortedDictionary<string, long> _sharesToday = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// Hears every completed deal: a shopper's purchase from one of the player's shop counters in a Fiefdom town owes the counter's merchant
-    /// their share of the price. Deals in the trade window, buy-backs, sales from anywhere else, and a purchase by one of the player's own
-    /// squads without a purse of its own (paid with the player's money, so nothing came in) are left alone. Called serially; changes only the
-    /// mod's own state, and the share is paid in the next slow step.
+    /// What each town's merchants paid the player as the player's cut of visitor sales since the last day change, by town key (saved in format 12).
+    /// </summary>
+    readonly SortedDictionary<string, long> _playerCutToday = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Hears completed deals. Unstaffed player shop counters pay 100% directly to the player; staffed merchant shops run as faction shops where
+    /// visitor sales pay the player's cut directly in <see cref="VisitorsBuy"/>.
     /// </summary>
     public void Traded(World world, in TradeSale sale)
     {
-        if (sale.Kind != TradeSaleKind.Shopping || sale.Buyback || sale.Price <= 0) return;
-        if (sale.Seller.Faction != world.Player.Faction || sale.Site.Length == 0) return;
-        if (sale.Buyer.Faction == world.Player.Faction && world.Squads.Find(sale.Buyer.Squad) is not { OwnPurse: true }) return;
-
-        OweShare(world, sale.Site, sale.Price, $"{sale.Units} {sale.Record} to {world.Characters.NameOf(sale.Buyer.Character)}, squad {sale.Buyer.Squad}");
-    }
-
-    /// <summary>
-    /// Owes the merchant of the counter <paramref name="counter"/> their share of <paramref name="price"/>, when it is a counter of a Fiefdom
-    /// town with a merchant on its line: the one on shift now, else the first of its holders. A counter nobody keeps owes nothing. Logs the
-    /// sale (<paramref name="what"/> says what was sold to whom).
-    /// </summary>
-    void OweShare(World world, string counter, long price, string what)
-    {
-        int percent = FiefdomSettings.Current.MerchantSharePercent;
-        if (percent <= 0 || _holders.Count == 0) return;
-        if (OwnedInTown(world, counter) is null || world.Machines.Find(counter) is not { Data.Function: ShopCounterFunction }) return;
-        if (MerchantOf(world, counter) is not { } id) return;
-
-        _shareOwed[id] = _shareOwed.GetValueOrDefault(id) + price * percent;
-        Log($"{_residents.GetValueOrDefault(id)?.Name}: owed {price * percent / 100.0:0.##} of a sale for {price} at {counter} ({what})");
+        // Nothing to deduct from player-owned unstaffed counters; faction-shop visitor sales settle their cut directly.
     }
 
     /// <summary>
@@ -70,9 +53,7 @@ public sealed partial class FiefdomSystem : ITradeObserver
     }
 
     /// <summary>
-    /// Pays each merchant the whole cats they are owed, from the player's money (where the takings went) into their home's purse, keeping the
-    /// fraction for later. A share the player's money cannot cover waits, and so does one owed to a merchant who cannot be paid now (out of the
-    /// world, or not in their home's squad); one owed to someone no longer a resident is dropped. Runs with the posts, once a game second.
+    /// Pays any remaining legacy format 11 owed shares so old saves settle cleanly.
     /// </summary>
     void PayShares(World world)
     {
@@ -89,26 +70,34 @@ public sealed partial class FiefdomSystem : ITradeObserver
 
             var c = world.LastingIds.Find(new LastingId(id));
             if (c.IsNone || !table.TryResolveNext(c, out int slot) || table.Cold(slot) is not { } cold) continue;
-            if (world.Squads.Find(cold.SquadId) is not { OwnPurse: true } home) continue;
+            if (world.Squads.Find(cold.SquadId) is not { OwnPurse: true } squad) continue;
 
             long cats = owed / 100;
             if (cats == 0 || world.Player.Money < cats) continue;
 
             world.Player.Money -= cats;
-            home.Money += cats;
+            squad.Money += cats;
             _shareOwed[id] = owed - cats * 100;
-            _sharesToday[r.Town] = _sharesToday.GetValueOrDefault(r.Town) + cats;
-            Log($"{r.Name}: kept {cats} of the takings, home purse now {home.Money}");
+            if (_shareOwed[id] < 100) _shareOwed.Remove(id);
         }
     }
 
     /// <summary>
-    /// At a day change: each town's news says what its merchants kept of the day's takings.
+    /// Records the player's cut from a merchant's visitor sale for the day's news.
+    /// </summary>
+    void RecordPlayerCut(string townKey, long cut)
+    {
+        if (cut > 0) _playerCutToday[townKey] = _playerCutToday.GetValueOrDefault(townKey) + cut;
+    }
+
+    /// <summary>
+    /// At a day change: each town's news says what its merchants paid the player from visitor sales.
     /// </summary>
     void TellShares(World world)
     {
-        foreach (var (key, cats) in _sharesToday)
-            if (cats > 0) TownOf(key).Tell(world.GameHours, $"merchants kept {cats} cats of the takings ({FiefdomSettings.Current.MerchantSharePercent}%)");
+        foreach (var (key, cats) in _playerCutToday)
+            if (cats > 0) TownOf(key).Tell(world.GameHours, $"merchants paid you {cats} cats ({FiefdomSettings.Current.PlayerSalesCutPercent}% of their visitor sales)");
+        _playerCutToday.Clear();
         _sharesToday.Clear();
     }
 

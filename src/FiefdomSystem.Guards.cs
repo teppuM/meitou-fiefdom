@@ -46,7 +46,8 @@ sealed class Guardhouse
     public required bool Gate { get; init; }
     public Squad? Squad { get; set; }
     public int Members { get; set; }
-    public int Free => Math.Max(0, Beds - Members);
+    public int BedUsers { get; set; }
+    public int Free => Math.Max(0, Beds - BedUsers);
 }
 
 public sealed partial class FiefdomSystem
@@ -115,6 +116,18 @@ public sealed partial class FiefdomSystem
     static int LivingIn(World world, Squad squad) => squad.Members.Count(m => world.Characters.IsAlive(m));
 
     /// <summary>
+    /// The living non-robot members of a squad (those who need a bed).
+    /// </summary>
+    static int LivingBedUsersIn(World world, Squad squad)
+    {
+        int count = 0;
+        var table = world.Characters;
+        foreach (var m in squad.Members)
+            if (table.TryResolveNext(m, out int slot) && table.Next[slot].Alive && table.Cold(slot) is { } cold && !IsRobot(cold)) count++;
+        return count;
+    }
+
+    /// <summary>
     /// The squad the mod made for a home, if any.
     /// </summary>
     static Squad? HomeSquadOf(World world, string site) => TaggedSquad(world, HomeTag + site);
@@ -149,6 +162,7 @@ public sealed partial class FiefdomSystem
             {
                 house.Squad = squad;
                 house.Members = LivingIn(world, squad);
+                house.BedUsers = LivingBedUsersIn(world, squad);
                 GiveGuardOptions(world, squad);
             }
             houses.Add(house);
@@ -248,19 +262,21 @@ public sealed partial class FiefdomSystem
     }
 
     /// <summary>
-    /// Makes a resident a guard: they leave any post and move into the guardhouse's squad, when it has a free bed.
+    /// Makes a resident a guard: they leave any post and move into the guardhouse's squad, when it has a free bed (robotic races need no bed).
     /// </summary>
     void Enlist(World world, PlayerTown town, string key, string site, ulong id)
     {
         if (_player is null || Guardhouses(world, town).Find(h => h.Site.Id == site) is not { } house) return;
         var r = _residents[id];
-        if (house.Free <= 0)
+        var c = world.LastingIds.Find(new LastingId(id));
+        if (c.IsNone) return;
+        bool robot = world.Characters.TryResolveNext(c, out int slot) && world.Characters.Cold(slot) is { } cold && IsRobot(cold);
+        if (!robot && house.Free <= 0)
         {
             world.Post($"No free bed for another guard in the {house.Site.Name}.");
             return;
         }
-        var c = world.LastingIds.Find(new LastingId(id));
-        if (c.IsNone || GuardSquad(world, town, house) is not { } squad) return;
+        if (GuardSquad(world, town, house) is not { } squad) return;
 
         if (_holders.Remove(id)) DropGiven(world, id);
         if (!MoveTo(world, c, squad))
@@ -292,7 +308,7 @@ public sealed partial class FiefdomSystem
     }
 
     /// <summary>
-    /// Sends a guard back to live as a resident, in the first home with a free bed; refused with a message when none has one.
+    /// Sends a guard back to live as a resident, in the first home with a free bed (or any home for a robotic race); refused with a message when none fits.
     /// </summary>
     void Release(World world, PlayerTown town, ulong id)
     {
@@ -300,9 +316,14 @@ public sealed partial class FiefdomSystem
         var r = _residents[id];
         var c = world.LastingIds.Find(new LastingId(id));
         if (c.IsNone) return;
-        if (Homes(world, town).FirstOrDefault(h => h.Free > 0) is not { } home || HomeSquad(world, town, home) is not { } homeSquad)
+        bool robot = world.Characters.TryResolveNext(c, out int slot) && world.Characters.Cold(slot) is { } cold && IsRobot(cold);
+        var homes = Homes(world, town);
+        var home = robot ? homes.OrderBy(h => h.Members).FirstOrDefault() : homes.FirstOrDefault(h => h.Free > 0);
+        if (home is null || HomeSquad(world, town, home) is not { } homeSquad)
         {
-            world.Post($"{r.Name} has no free bed in a home to go back to: build a bed in a building residents live in.");
+            world.Post(robot
+                ? $"{r.Name} has no home to go back to: mark a building for residents first."
+                : $"{r.Name} has no free bed in a home to go back to: build a bed in a building residents live in.");
             return;
         }
         if (!MoveTo(world, c, homeSquad)) return;

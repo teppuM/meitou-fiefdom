@@ -31,8 +31,10 @@ A code mod for [MeitouClient](https://meitou.kenshi.wiki) that turns one of your
   - Fearful stewards refuse armed groups.
   - Traitorous stewards take bribes.
   - Dumb or maniacal stewards sometimes just get it wrong.
-- Residents get their own squads. They aren't led by you and don't count toward your squad limit. They live in the house, sleep in its beds and keep a purse of their own.
+- Residents get their own squads. They aren't led by you and don't count toward your squad limit. They live in the house, sleep in its beds and keep a purse of their own. Robotic races (anything marked as a robot in game data, including modded robot races) need a residents' building and room under the town cap, not a bed; the same applies to robotic guards in a guardhouse.
+- Right-click one of your own squad members standing in town to choose **Settle in town**, turning them into a townsperson marked as a former squad member. You can take them back later from their right-click menu (**Rejoin squad**) or from the **Residents** tab; ordinary townspeople who arrived on their own cannot be taken into your squad.
 - Right-click a resident to **Evict** them.
+- Your own faction's living races always appear in both the **Races** tab and the **Policies** tab so you can set recruitment rules and town laws for them even before outsiders of those races arrive.
 
 ### Work, wages and shops
 
@@ -43,7 +45,7 @@ A code mod for [MeitouClient](https://meitou.kenshi.wiki) that turns one of your
 - Fiefdom only ever takes away the jobs it gave, so a job another mod gives one of your townspeople stays.
 - Wages are paid at each day change, per shift worked, from your money into the worker's home purse. Unpaid workers stop, and leave after three unpaid days.
 - Residents without a post earn a small outside income instead.
-- A resident on a **shop counter** becomes its merchant. They carry goods from town-stock boxes to the counter, never the town's last meals, and the game's own shoppers and the town's visitors buy from it. The takings are yours, less the merchant's share (25% to start), which goes into the merchant's household purse. A merchant takes no wage: the share is all they earn, so a counter you stock yourself with nobody on it keeps every cat for you. You choose what kinds of goods each counter sells.
+- A resident assigned to a **shop counter** (inside a building or outdoors as a market stall) becomes its merchant and runs their own shop. They get their own squad, purse and protected shop stock (so their stock cannot be stolen or looted), restock slowly from outside matching the stall's category (food, medicine, drugs, weapons, armor, bags, robotics or general goods), and give you a 15% discount when you buy from them (while paying 15% less than city traders when you sell to them). Active stocked merchants also draw more visitors to town and raise town pull. When visitors buy from a merchant, 15% goes to your money and the merchant keeps the rest in their shop purse. Changing a shop's category wipes its current stock so new goods trickle in slowly. By default, merchants never touch your town stock; you can switch **Buy town surplus** on per counter if you want them to buy excess town-stock goods (above your town's meal, first aid kit and machine reserves) at 40% wholesale to resell to visitors. Click any shop counter in the world to open its shop settings directly. Unstaffed counters stay yours at 100% takings.
 
 ### Guards
 
@@ -80,7 +82,9 @@ On the Settings screen's Mods page:
 | Hours between visitor groups (0 for no visitors) | 24 | 0 to 96 |
 | Days starving before a resident leaves | 1 | 0.25 to 5 |
 | Food kept back for meals, per resident | 2 | 0 to 20 |
-| Merchant's share of the takings, percent | 25 | 0 to 100 |
+| Your cut of merchant sales, percent | 15 | 0 to 50 |
+| Merchant wholesale rate for town surplus, percent | 40 | 10 to 80 |
+| Hours between outside stock deliveries | 4 | 1 to 24 |
 
 ## Getting started
 

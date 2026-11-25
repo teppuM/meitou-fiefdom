@@ -50,8 +50,20 @@ public sealed class FiefdomSettings
     public int FoodKeptPerResident { get; set; } = 2;
 
     /// <summary>
-    /// What share of a counter's takings its merchant keeps, in percent; the rest stays with the player.
+    /// What cut of a merchant's visitor sales goes to the player, in percent; the merchant keeps the rest in their shop purse.
     /// </summary>
-    [Setting("Merchant's share of the takings (%)", Hint = "Of every sale at a shop counter a merchant keeps, this share goes from your money into the merchant's home purse: it is all a merchant earns. The rest is yours.", Min = 0, Max = 100, Step = 5)]
-    public int MerchantSharePercent { get; set; } = 25;
+    [Setting("Your cut of merchant sales (%)", Hint = "Of every sale a town merchant makes to a visitor, this share goes to your money and the merchant keeps the rest in their shop purse.", Min = 0, Max = 50, Step = 5)]
+    public int PlayerSalesCutPercent { get; set; } = 15;
+
+    /// <summary>
+    /// What percent of base value a merchant pays you when buying surplus goods from town stock (only for shops with Buy town surplus switched on).
+    /// </summary>
+    [Setting("Merchant wholesale rate for town surplus (%)", Hint = "When Buy town surplus is switched on for a shop, the merchant pays you this percent of base value from their purse for excess town-stock goods.", Min = 10, Max = 80, Step = 5)]
+    public int MerchantWholesalePercent { get; set; } = 40;
+
+    /// <summary>
+    /// How often, in game hours, each active merchant shop receives a small trickle of outside stock.
+    /// </summary>
+    [Setting("Hours between outside stock deliveries", Hint = "How often each active merchant shop trickles in a small batch of outside goods matching its category.", Min = 1, Max = 24, Step = 1)]
+    public int ShopTrickleHours { get; set; } = 4;
 }

@@ -323,6 +323,7 @@ public sealed class SettlerGroup
 }
 
 /// <summary>
-/// A resident: which town took them in, which home they live in, when they came, and their name for the news.
+/// A resident: which town took them in, which home they live in, when they came, their name for the news, and whether they came from the player's
+/// own squad (which lets the player take them back later).
 /// </summary>
-public sealed record Resident(string Town, string Home, double Since, string Name);
+public sealed record Resident(string Town, string Home, double Since, string Name, bool FromPlayer = false);

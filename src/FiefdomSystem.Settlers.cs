@@ -12,6 +12,7 @@ using Meitou.Simulation.Locks;
 using Meitou.Simulation.Movement;
 using Meitou.Simulation.Player;
 using Meitou.Simulation.Population;
+using Meitou.Simulation.Production;
 using Meitou.Simulation.Weather;
 
 namespace Fiefdom;
@@ -62,6 +63,16 @@ public sealed record AnswerGroup(int Serial, bool Accept) : SettlerCommand;
 public sealed record EvictResident(CharacterId Character) : SettlerCommand;
 
 /// <summary>
+/// Settles one of the player's squad members into a Fiefdom town as a townsperson (marked so the player may take them back later).
+/// </summary>
+public sealed record SettleMember(int Town, CharacterId Character) : SettlerCommand;
+
+/// <summary>
+/// Takes back into the player's squad a resident who originally came from the player's squad.
+/// </summary>
+public sealed record ReclaimResident(CharacterId Character) : SettlerCommand;
+
+/// <summary>
 /// Testing: the town's next group is due now (an Open town with a free bed still decides who comes).
 /// </summary>
 public sealed record BringSettlers(int Town) : SettlerCommand;
@@ -96,7 +107,8 @@ sealed class Home
     public required int Beds { get; init; }
     public Squad? Squad { get; set; }
     public int Members { get; set; }
-    public int Free => Math.Max(0, Beds - Members);
+    public int BedUsers { get; set; }
+    public int Free => Math.Max(0, Beds - BedUsers);
 }
 
 public sealed partial class FiefdomSystem
@@ -242,8 +254,14 @@ public sealed partial class FiefdomSystem
             case EvictResident evict:
                 Evict(world, evict.Character);
                 break;
+            case ReclaimResident reclaim:
+                Reclaim(world, reclaim.Character);
+                break;
             case SetSells sells:
                 Apply(world, sells);
+                break;
+            case SetBuySurplus surplus:
+                Apply(world, surplus);
                 break;
             default:
                 if (ApplyGuard(world, command) || ApplyRunners(world, command) || ApplyPost(world, command) || ApplyLine(world, command)) break;
@@ -268,6 +286,7 @@ public sealed partial class FiefdomSystem
             SetRaceBlocked c => c.Town,
             SetAttackOnSight a => a.Town,
             AppointSteward c => c.Town,
+            SettleMember c => c.Town,
             BringSettlers c => c.Town,
             PlanBeds c => c.Town,
             PlanGuardBeds c => c.Town,
@@ -310,6 +329,9 @@ public sealed partial class FiefdomSystem
                 break;
             case AppointSteward appoint:
                 Appoint(world, town, state, appoint.Character, now);
+                break;
+            case SettleMember settle:
+                Settle(world, town, state, settle.Character);
                 break;
             case BringSettlers:
                 ReplaceTravelling(world, state, visiting: false);
@@ -409,6 +431,16 @@ public sealed partial class FiefdomSystem
     }
 
     /// <summary>
+    /// Whether a character belongs to a robotic race (the game data's <c>is robot</c> flag, so modded robot races count the same as Skeletons).
+    /// </summary>
+    static bool IsRobot(CharacterCold cold) => cold.Race?.IsRobot == true;
+
+    /// <summary>
+    /// Whether a race id is a robotic race in the merged game data.
+    /// </summary>
+    static bool IsRobotRace(string raceId) => SettlerData.Races.TryGetValue(raceId, out var r) && r.IsRobot;
+
+    /// <summary>
     /// Sends a resident away: they leave the player's faction as a dismissed character does.
     /// </summary>
     void Evict(World world, CharacterId character)
@@ -422,6 +454,122 @@ public sealed partial class FiefdomSystem
 
         _residents.Remove(cold.LastingId.Value);
         TownOf(resident.Town).Tell(world.GameHours, $"{cold.Name} was evicted");
+    }
+
+    /// <summary>
+    /// Moves one of the player's controllable squad members standing in <paramref name="town"/> into a residents' home squad, marking them so the
+    /// player can take them back later. Never settles the player's last controllable squad member, an animal, or anyone caged.
+    /// </summary>
+    void Settle(World world, PlayerTown town, TownState state, CharacterId character)
+    {
+        var table = world.Characters;
+        if (_player is null || _ai is null || !table.TryResolveNext(character, out int slot) || !table.Next[slot].Alive) return;
+        if (table.Cold(slot) is not { IsPlayer: true, DiedTick: < 0, IsImprisoned: false } cold) return;
+        if (SquadRegistry.IsAnimal(cold)) return;
+        if (world.Squads.Find(cold.SquadId) is not { Independent: false, Dead: false } fromSquad || fromSquad.Faction != world.Player.Faction) return;
+
+        ulong id = world.LastingIds.GetOrGive(character).Value;
+        if (_residents.ContainsKey(id)) return;
+
+        var at = table.Next[slot].Position;
+        if (Vector2.Distance(new Vector2(at.X, at.Z), Centre(town)) > town.Radius) return;
+
+        int controllable = 0;
+        for (int i = 0; i < table.Next.Length; i++)
+        {
+            if (!table.Next[i].Alive || table.Cold(i) is not { IsPlayer: true, DiedTick: < 0 } other) continue;
+            if (world.Squads.Find(other.SquadId) is { Independent: false, Dead: false } s && s.Faction == world.Player.Faction) controllable++;
+        }
+        if (controllable <= 1)
+        {
+            world.Post("You cannot settle your last controllable squad member.");
+            return;
+        }
+        if (ResidentsOf(state.Key) >= state.Cap)
+        {
+            world.Post($"{town.Name} is at its population cap.");
+            return;
+        }
+
+        bool robot = IsRobot(cold);
+        var homes = Homes(world, town);
+        var home = robot ? homes.OrderBy(h => h.Members).FirstOrDefault() : homes.FirstOrDefault(h => h.Free > 0);
+        if (home is null || HomeSquad(world, town, home) is not { } homeSquad)
+        {
+            world.Post(robot
+                ? $"No home in {town.Name}: mark a building for residents first."
+                : $"No free bed in {town.Name}: build a bed in a residents' home first.");
+            return;
+        }
+
+        if (_production is not null)
+        {
+            for (int i = cold.Jobs.Count - 1; i >= 0; i--)
+                _production.Inputs(world, [new RemoveJob(character, i) { Tick = world.Tick }]);
+        }
+        TaskStart.End(world, slot, TaskEnd.Stopped);
+        cold.Orders |= CharacterOrders.Jobs;
+        world.Player.Selection.Remove(character);
+
+        if (!MoveTo(world, character, homeSquad))
+        {
+            world.Post($"{cold.Name} could not move into the {home.Site.Name}.");
+            return;
+        }
+
+        _residents[id] = new Resident(state.Key, home.Site.Id, world.GameHours, cold.Name, FromPlayer: true);
+        state.Tell(world.GameHours, $"{cold.Name} settled in {town.Name}");
+        Log($"{town.Name}: {cold.Name} settled from player squad into the {home.Site.Name} ({home.Site.Id})");
+    }
+
+    /// <summary>
+    /// Takes a resident who originally came from the player's squad back into a controllable player squad. Ordinary townspeople cannot be reclaimed.
+    /// </summary>
+    void Reclaim(World world, CharacterId character)
+    {
+        var table = world.Characters;
+        if (_player is null || _ai is null || !table.TryResolveNext(character, out int slot) || !table.Next[slot].Alive) return;
+        if (table.Cold(slot) is not { IsPlayer: true, DiedTick: < 0, IsImprisoned: false } cold) return;
+        if (cold.LastingId.IsNone || !_residents.TryGetValue(cold.LastingId.Value, out var resident) || !resident.FromPlayer) return;
+
+        var limits = GameConstants.FromDatabase(_data.Db);
+        if (SquadManagement.CappedHeads(world) >= limits.MaxFactionSize)
+        {
+            world.Post("Your faction is at its maximum size.");
+            return;
+        }
+
+        int maxSquad = limits.MaxSquadSize;
+        var active = world.Squads.Find(world.Player.Squad);
+        var target = active is { Independent: false, Dead: false } && active.Faction == world.Player.Faction && active.Members.Count < maxSquad
+            ? active
+            : SquadManagement.LedSquads(world).FirstOrDefault(s => s.Members.Count < maxSquad);
+        if (target is null)
+        {
+            world.Post("All of your squads are full.");
+            return;
+        }
+
+        ulong id = cold.LastingId.Value;
+        _holders.Remove(id);
+        _runners.Remove(id);
+        DropGiven(world, id);
+        _pay.Remove(id);
+        _starvingSince.Remove(id);
+        _hunts.Remove(character);
+        _trips.Remove(id);
+        _carrying.Remove(id);
+        _shareOwed.Remove(id);
+
+        if (!MoveTo(world, character, target))
+        {
+            world.Post($"{resident.Name} could not rejoin {target.Name}.");
+            return;
+        }
+
+        _residents.Remove(id);
+        TownOf(resident.Town).Tell(world.GameHours, $"{resident.Name} rejoined your squad");
+        Log($"{resident.Town}: {resident.Name} reclaimed into player squad {target.Name} ({target.Id})");
     }
 
     #endregion
@@ -699,16 +847,19 @@ public sealed partial class FiefdomSystem
     Applicants Assess(World world, PlayerTown town, TownState state, Platoon p, Squad squad, List<CharacterId> members)
     {
         var table = world.Characters;
-        int free = Homes(world, town).Sum(h => h.Free);
+        var homes = Homes(world, town);
+        int free = homes.Sum(h => h.Free);
         int room = state.Cap - ResidentsOf(state.Key);
         var harms = RegionOf(town)?.Harms ?? new HashSet<WeatherAffecting>();
         var blocked = new SortedSet<string>(StringComparer.Ordinal);
         var harmed = new SortedSet<string>(StringComparer.Ordinal);
         bool armed = false;
+        int bedsNeeded = 0;
         foreach (var id in members)
         {
             table.TryResolveNext(id, out int slot);
             var cold = table.Cold(slot)!;
+            if (!IsRobot(cold)) bedsNeeded++;
             if (cold.Race is { } race)
             {
                 if (state.BlockedRaces.Contains(race.StringId)) blocked.Add(SettlerData.RaceName(race.StringId));
@@ -721,7 +872,7 @@ public sealed partial class FiefdomSystem
 
         long purse = squad.Money;
         return new Applicants(members.Count, free, room, [.. blocked], [.. harmed], purse / members.Count, armed, BringsTrade(world, state, members),
-            purse);
+            purse, bedsNeeded, homes.Count > 0);
     }
 
     /// <summary>
@@ -770,13 +921,16 @@ public sealed partial class FiefdomSystem
         long share = purse / members.Count;
         foreach (var id in members)
         {
-            if (homes.FirstOrDefault(h => h.Free > 0) is not { } home || HomeSquad(world, town, home) is not { } homeSquad) break;
             if (!table.TryResolveNext(id, out int slot) || table.Cold(slot) is not { } cold) continue;
+            bool robot = IsRobot(cold);
+            var home = robot ? homes.OrderBy(h => h.Members).FirstOrDefault() : homes.FirstOrDefault(h => h.Free > 0);
+            if (home is null || HomeSquad(world, town, home) is not { } homeSquad) break;
             StopWalk(world, slot);
             if (!_population!.JoinPlayerSquad(world, id, homeSquad.Id)) continue;
             GiveOwnName(world, id, cold);
 
             home.Members++;
+            if (!robot) home.BedUsers++;
             homeSquad.Money += share;
             purse -= share;
             names.Add(cold.Name);
@@ -863,9 +1017,15 @@ public sealed partial class FiefdomSystem
         double now = world.GameHours;
         if (!state.Open || _groups.Values.Any(g => g.Town == state.Key && !g.Visiting)) return;
 
-        int free = Homes(world, town).Sum(h => h.Free);
+        var homes = Homes(world, town);
+        int free = homes.Sum(h => h.Free);
         int room = state.Cap - ResidentsOf(state.Key);
-        if (free <= 0 || room <= 0) return;
+        if (homes.Count == 0 || room <= 0) return;
+        if (free <= 0 && Candidates(world, town, state, 0, room).Count == 0)
+        {
+            state.NextArrival = double.NaN;
+            return;
+        }
 
         var (pull, _) = Pull(world, town, state);
         if (pull < NoArrivalsBelow)
@@ -880,7 +1040,7 @@ public sealed partial class FiefdomSystem
         }
         if (now < state.NextArrival) return;
 
-        if (!Bring(world, town, state, Math.Min(free, room))) state.NextArrival = now + 6;
+        if (!Bring(world, town, state, free, room)) state.NextArrival = now + 6;
     }
 
     /// <summary>
@@ -899,7 +1059,7 @@ public sealed partial class FiefdomSystem
     /// The groups of the town's region that may come now: their world states pass, their faction is not hostile to the player now, not all
     /// their races are kept out, the weather would not hurt them (unless the player allows it), and the free beds hold the most they can number.
     /// </summary>
-    List<(SettlerTemplate Template, int Faction)> Candidates(World world, PlayerTown town, TownState state, int beds, bool visiting = false)
+    List<(SettlerTemplate Template, int Faction)> Candidates(World world, PlayerTown town, TownState state, int beds, int room, bool visiting = false)
     {
         var list = new List<(SettlerTemplate, int)>();
         if (RegionOf(town) is not { } region || _aggro is null || _population is null) return list;
@@ -926,7 +1086,9 @@ public sealed partial class FiefdomSystem
             }
             if (t.Races.Count > 0 && t.Races.All(state.BlockedRaces.Contains)) continue;
             if (!state.AllowHarmed && t.Unprotected.Count > 0) continue;
-            if (t.MaxSize > beds) continue;
+            if (t.MaxSize > room) continue;
+            bool allRobots = t.Races.Count > 0 && t.Races.All(IsRobotRace);
+            if (!visiting && !allRobots && t.MaxSize > beds) continue;
             list.Add((t, faction));
         }
         return list;
@@ -961,9 +1123,9 @@ public sealed partial class FiefdomSystem
     /// Picks a group by the region's shares and makes it out of sight beyond the town, walking toward it. False when none may come or no place
     /// was found.
     /// </summary>
-    bool Bring(World world, PlayerTown town, TownState state, int beds, bool visiting = false)
+    bool Bring(World world, PlayerTown town, TownState state, int beds, int room = int.MaxValue, bool visiting = false)
     {
-        var candidates = Candidates(world, town, state, beds, visiting);
+        var candidates = Candidates(world, town, state, beds, room, visiting);
         if (candidates.Count == 0)
         {
             Log($"{town.Name}: no group in {RegionOf(town)?.Name ?? "this region"} may come now");
@@ -1050,7 +1212,17 @@ public sealed partial class FiefdomSystem
             if (squad.Dead || squad.Faction != world.Player.Faction || !squad.ModTags.TryGetValue(ModId, out string? tag)) continue;
             if (!tag.StartsWith(HomeTag, StringComparison.Ordinal) || homes.Find(h => h.Site.Id == tag[HomeTag.Length..]) is not { } home) continue;
             home.Squad = squad;
-            home.Members = squad.Members.Count(m => table.IsAlive(m));
+        }
+        // Count living residents assigned to each home (including merchants temporarily living in their own shop squad) so organic beds stay reserved.
+        foreach (var (id, r) in _residents)
+        {
+            if (homes.Find(h => h.Site.Id == r.Home) is not { } home) continue;
+            var c = world.LastingIds.Find(new LastingId(id));
+            if (!c.IsNone && table.TryResolveNext(c, out int slot) && table.Next[slot].Alive)
+            {
+                home.Members++;
+                if (table.Cold(slot) is { } cold && !IsRobot(cold)) home.BedUsers++;
+            }
         }
         return homes;
     }
@@ -1094,7 +1266,7 @@ public sealed partial class FiefdomSystem
         {
             if (squad.Dead || squad.Faction != world.Player.Faction || squad.Ai?.Current is not { } current) continue;
             if (!squad.ModTags.TryGetValue(ModId, out string? tag)) continue;
-            string? want = tag.StartsWith(HomeTag, StringComparison.Ordinal) ? ResidentPackage
+            string? want = tag.StartsWith(HomeTag, StringComparison.Ordinal) || tag.StartsWith(ShopTag, StringComparison.Ordinal) ? ResidentPackage
                 : tag.StartsWith(GuardTag, StringComparison.Ordinal)
                     ? ((_rules.GetValueOrDefault(tag[GuardTag.Length..]) & BuildingRule.GateDuty) != 0 ? GatePackage : PatrolPackage)
                 : null;
@@ -1213,8 +1385,16 @@ public sealed partial class FiefdomSystem
             reasons.Add($"+5 thinly guarded ({defenders} of your people for {residents} residents)");
         }
 
-        // Shops are the shop counters (furniture function 9) standing complete inside the town's buildings and holding goods, not a label.
+        // Shops are active stocked merchant shops and unstaffed player shop counters standing complete in town and holding goods.
         bool goods = false, food = false;
+        int merchantCount = 0;
+        foreach (var (_, _, stock) in ActiveMerchantShops(world, town))
+        {
+            if (stock.Items.Count == 0) continue;
+            merchantCount++;
+            goods = true;
+            food |= stock.Items.Any(i => i.IsFood);
+        }
         foreach (var m in world.Machines.All)
         {
             if (m.Data.Function != ShopCounterFunction || m.Storage is not { } stock || stock.Items.Count == 0) continue;
@@ -1232,6 +1412,12 @@ public sealed partial class FiefdomSystem
         {
             score += 10;
             reasons.Add("+10 food for sale");
+        }
+        if (merchantCount > 0)
+        {
+            int bonus = Math.Min(15, merchantCount * 5);
+            score += bonus;
+            reasons.Add($"+{bonus} active merchant{(merchantCount == 1 ? "" : "s")} ({merchantCount} shop{(merchantCount == 1 ? "" : "s")})");
         }
 
         int killed = state.Killings.Count(at => world.GameHours - at <= KillingMemory);

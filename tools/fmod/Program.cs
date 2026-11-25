@@ -71,11 +71,21 @@ patrol.References["Leader AI Goals"] =
 patrol.References["Squad AI Goals"] = [.. patrol.References["Leader AI Goals"]];
 patrol.References["Slave AI Goals"] = [new("3397-gamedata.base", 0, 24, 0)];
 
+// 5: the merchant faction shop's trade terms: 0.85 buy mult gives the player a 15% buying discount and lowers what the merchant pays when the
+// player sells to them (encouraging city trading and future caravans). No vendor lists, so Fiefdom manages trickle-in stock itself without wiping
+// player-sold items on restock.
+var merchantShop = Record(5, FcsRecordType.SquadTemplate, "Fiefdom merchant shop");
+merchantShop.Bools["is trader"] = false;
+merchantShop.Bools["buys stolen"] = false;
+merchantShop.Bools["buys illegal"] = false;
+merchantShop.Floats["buy mult"] = 0.85f;
+
 mod.Records.Add(wander);
 mod.Records.Add(residents);
 mod.Records.Add(visitors);
 mod.Records.Add(patrol);
-mod.NextId = 5;
+mod.Records.Add(merchantShop);
+mod.NextId = 6;
 FcsWriter.WriteFile(mod, path);
 Console.WriteLine($"wrote {mod.Records.Count} records to {path}");
 

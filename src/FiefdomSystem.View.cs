@@ -20,15 +20,22 @@ public sealed record FiefdomView(
     IReadOnlyDictionary<int, TownCounts> Counts,
     IReadOnlyDictionary<int, TownView> Details,
     IReadOnlyDictionary<CharacterId, int> Residents,
-    IReadOnlyList<TownArea> Areas)
+    IReadOnlySet<CharacterId> Reclaimable,
+    IReadOnlyList<TownArea> Areas,
+    IReadOnlyDictionary<string, CounterShopView> Shops)
 {
     /// <summary>
     /// Nothing yet: no towns.
     /// </summary>
     public static readonly FiefdomView Empty = new(new HashSet<int>(), new Dictionary<string, int>(), new Dictionary<string, BuildingRule>(),
         new Dictionary<string, StorageMark>(), new HashSet<string>(), new Dictionary<int, TownCounts>(), new Dictionary<int, TownView>(),
-        new Dictionary<CharacterId, int>(), []);
+        new Dictionary<CharacterId, int>(), new HashSet<CharacterId>(), [], new Dictionary<string, CounterShopView>());
 }
+
+/// <summary>
+/// Summary of one shop counter in a Fiefdom town, for its building-panel button and focused shop view.
+/// </summary>
+public sealed record CounterShopView(string Site, int Town, Goods Sells, bool BuySurplus, string? MerchantName, long Purse, int StockCount);
 
 /// <summary>
 /// One town's numbers for the Fiefdom window: buildings that can take rules, how many residents live in and how many keep town stock, and its
@@ -111,6 +118,21 @@ public sealed record WorkLine(string Key, string Name, string Where, PostKind Ki
     /// For a guard line: whether its guards watch the gates (else they patrol).
     /// </summary>
     public bool Gate { get; init; }
+
+    /// <summary>
+    /// For a shop counter line: whether the merchant buys town surplus at wholesale.
+    /// </summary>
+    public bool BuySurplus { get; init; }
+
+    /// <summary>
+    /// For a shop counter line: the merchant shop squad's current purse (cats).
+    /// </summary>
+    public long Purse { get; init; }
+
+    /// <summary>
+    /// For a shop counter line: how many item stacks currently sit in the merchant's shop stock.
+    /// </summary>
+    public int StockCount { get; init; }
 }
 
 /// <summary>
@@ -126,9 +148,9 @@ public sealed record PostLine(string Site, string Name, PostKind Kind, int Place
     Goods Sells);
 
 /// <summary>
-/// A resident with no post.
+/// A resident with their post (or none) and whether they came from the player's own squad.
 /// </summary>
-public sealed record PersonLine(CharacterId Id, string Name, string Post = "");
+public sealed record PersonLine(CharacterId Id, string Name, string Post = "", bool FromPlayer = false);
 
 public sealed partial class FiefdomSystem
 {
@@ -149,19 +171,31 @@ public sealed partial class FiefdomSystem
         }
 
         var siteTown = new Dictionary<string, int>(StringComparer.Ordinal);
+        var shops = new Dictionary<string, CounterShopView>(StringComparer.Ordinal);
         foreach (var site in world.Buildings.All)
         {
             if (site.Owner != world.Player.Faction) continue;
-            if (!RuleRecords.Contains(site.Record) && !StorageRecords.Contains(site.Record)) continue;
+            bool isCounter = CounterRecords.Contains(site.Record);
+            if (!RuleRecords.Contains(site.Record) && !StorageRecords.Contains(site.Record) && !isCounter) continue;
 
             int number = TownOf(world, site);
-            if (towns.Contains(number)) siteTown[site.Id] = number;
+            if (!towns.Contains(number)) continue;
+            siteTown[site.Id] = number;
+
+            if (isCounter && site.Complete)
+            {
+                ulong? mid = MerchantOf(world, site.Id);
+                string? mname = mid is { } id && _residents.TryGetValue(id, out var r) ? r.Name : null;
+                var shopSquad = ShopSquadOf(world, site.Id);
+                shops[site.Id] = new CounterShopView(site.Id, number, SellsAt(site.Id), BuysSurplusAt(site.Id), mname,
+                    shopSquad?.Money ?? 0, shopSquad?.Shop?.Stock.Items.Count ?? 0);
+            }
         }
 
         var inStorehouse = new HashSet<string>(StringComparer.Ordinal);
         var marks = EffectiveMarks(world, siteTown, inStorehouse);
         return new FiefdomView(towns, siteTown, new Dictionary<string, BuildingRule>(_rules), marks, inStorehouse, Count(siteTown, marks), details,
-            ResidentIds(world), areas);
+            ResidentIds(world), ReclaimableIds(world), areas, shops);
     }
 
     /// <summary>
@@ -182,6 +216,36 @@ public sealed partial class FiefdomSystem
     }
 
     /// <summary>
+    /// The residents in the world now who came from the player's own squad and may be taken back.
+    /// </summary>
+    HashSet<CharacterId> ReclaimableIds(World world)
+    {
+        var ids = new HashSet<CharacterId>();
+        foreach (var (id, r) in _residents)
+        {
+            if (!r.FromPlayer) continue;
+            var c = world.LastingIds.Find(new LastingId(id));
+            if (!c.IsNone) ids.Add(c);
+        }
+        return ids;
+    }
+
+    /// <summary>
+    /// Every race held by a living character of the player's faction (your squads and your townspeople).
+    /// </summary>
+    static HashSet<string> PlayerRaces(World world)
+    {
+        var races = new HashSet<string>(StringComparer.Ordinal);
+        var table = world.Characters;
+        for (int i = 0; i < table.Next.Length; i++)
+        {
+            if (!table.Next[i].Alive || table.Cold(i) is not { IsPlayer: true, DiedTick: < 0, Race.StringId: { } race }) continue;
+            if (SettlerData.Races.ContainsKey(race)) races.Add(race);
+        }
+        return races;
+    }
+
+    /// <summary>
     /// One town's settlers and residents.
     /// </summary>
     TownView Detail(World world, PlayerTown town, TownState state)
@@ -194,6 +258,7 @@ public sealed partial class FiefdomSystem
         var raceIds = new SortedSet<string>(StringComparer.Ordinal);
         if (region is not null)
             foreach (var t in region.Templates) raceIds.UnionWith(t.Races);
+        raceIds.UnionWith(PlayerRaces(world));
         // A race kept out that the data no longer has (its mod removed) stays in the save but is not shown.
         raceIds.UnionWith(state.BlockedRaces.Where(SettlerData.Races.ContainsKey));
         var races = raceIds.Select(id => new RaceChoice(id, SettlerData.RaceName(id), SettlerData.GroupOf(id), state.BlockedRaces.Contains(id)))
@@ -222,9 +287,11 @@ public sealed partial class FiefdomSystem
         var groups = new List<GroupLine>();
         foreach (var g in _groups.Values.Where(g => g.Town == state.Key)) groups.Add(GroupOf(world, town, state, g));
 
+        bool robotCanCome = free <= 0 && homes.Count > 0 && state.Cap > residents
+            && Candidates(world, town, state, 0, state.Cap - residents).Count > 0;
         return new TownView(town.Number, town.Name, region?.Name ?? "unknown", state.Open, state.Cap, state.Pace, state.AllowHarmed,
             region is { Harms.Count: > 0 } ? string.Join(", ", region.Harms.Select(SettlerData.NameOf)) : "",
-            races, steward, note, pull, reasons, NextGroupText(world, state, groups.Count > 0, free, residents, pull), residents,
+            races, steward, note, pull, reasons, NextGroupText(world, state, groups.Count > 0, homes.Count > 0, free, residents, pull, robotCanCome), residents,
             homes.Sum(h => h.Beds), free, [.. homes.Select(h => new HomeLine(h.Site.Name, h.Members, h.Beds))], groups, [.. state.News], stewardId,
             PostLines(world, town, state, out var unposted), unposted, WorkLines(world, town, state), PeopleLines(world, state),
             _lastBill.GetValueOrDefault(state.Key).Paid, _lastBill.GetValueOrDefault(state.Key).Unpaid, PolicyLines(world, state));
@@ -250,9 +317,23 @@ public sealed partial class FiefdomSystem
                 if (!c.IsNone) holders.Add(new HolderLine(c, _residents.TryGetValue(id, out var r) ? r.Name : "someone", h.Shift, pay?.Eating ?? false, pay?.Unpaid > 0));
             }
             string where = first.Parent is { } parent && world.Buildings.Find(parent) is { } outer ? $"in the {outer.Name}" : "outside";
-            string name = posts.Count > 1 ? $"{NameOf(posts[0])} x{posts.Count}" : NameOf(posts[0]);
-            lines.Add(new WorkLine(group.Key, name, where, posts[0].Kind, posts.Sum(p => p.Places), HoursOf(state.Key, group.Key), holders, sites,
-                posts[0].Kind == PostKind.Counter ? SellsAt(first.Id) : Goods.None));
+            if (posts[0].Kind == PostKind.Counter)
+            {
+                var sells = SellsAt(first.Id);
+                var shopSquad = ShopSquadOf(world, first.Id);
+                string name = $"{NameOf(posts[0])} ({GoodsSummary(sells)})";
+                lines.Add(new WorkLine(group.Key, name, where, PostKind.Counter, posts.Sum(p => p.Places), HoursOf(state.Key, group.Key), holders, sites, sells)
+                {
+                    BuySurplus = BuysSurplusAt(first.Id),
+                    Purse = shopSquad?.Money ?? 0,
+                    StockCount = shopSquad?.Shop?.Stock.Items.Count ?? 0,
+                });
+            }
+            else
+            {
+                string name = posts.Count > 1 ? $"{NameOf(posts[0])} x{posts.Count}" : NameOf(posts[0]);
+                lines.Add(new WorkLine(group.Key, name, where, posts[0].Kind, posts.Sum(p => p.Places), HoursOf(state.Key, group.Key), holders, sites, Goods.None));
+            }
         }
         var runners = new List<HolderLine>();
         foreach (var (id, key) in _runners)
@@ -274,9 +355,27 @@ public sealed partial class FiefdomSystem
                     holders.Add(new HolderLine(m, r.Name, Shift.Always, false, _pay.GetValueOrDefault(cold.LastingId.Value)?.Unpaid > 0));
                 }
             lines.Add(new WorkLine(GuardLine + house.Site.Id, house.Gate ? "Gate guards" : "Patrol guards", $"in the {house.Site.Name}", PostKind.Guard,
-                house.Beds, Hours.DayAndNight, holders, [house.Site.Id], Goods.None) { Gate = house.Gate });
+                Math.Max(house.Beds, holders.Count), Hours.DayAndNight, holders, [house.Site.Id], Goods.None) { Gate = house.Gate });
         }
         return lines;
+    }
+
+    /// <summary>
+    /// Short human-readable label for a shop counter's chosen <see cref="Goods"/> flags.
+    /// </summary>
+    public static string GoodsSummary(Goods sells)
+    {
+        if (sells == Goods.None) return "nothing";
+        var parts = new List<string>();
+        if ((sells & Goods.Food) != 0) parts.Add("Food");
+        if ((sells & Goods.Medicine) != 0) parts.Add("Medicine");
+        if ((sells & Goods.Drugs) != 0) parts.Add("Drugs");
+        if ((sells & Goods.Weapons) != 0) parts.Add("Weapons");
+        if ((sells & Goods.Armour) != 0) parts.Add("Armor");
+        if ((sells & Goods.Bags) != 0) parts.Add("Bags");
+        if ((sells & Goods.Robotics) != 0) parts.Add("Robotics");
+        if ((sells & Goods.Other) != 0) parts.Add("General");
+        return parts.Count <= 2 ? string.Join(" & ", parts) : $"{parts[0]} +{parts.Count - 1}";
     }
 
     /// <summary>
@@ -286,11 +385,13 @@ public sealed partial class FiefdomSystem
     {
         var races = new SortedSet<string>(state.Seen.Keys, StringComparer.Ordinal);
         races.UnionWith(state.AttackOnSight);
+        var own = PlayerRaces(world);
+        races.UnionWith(own);
         return [.. races.Select(id =>
         {
             string seen = state.Seen.TryGetValue(id, out double at)
                 ? world.GameHours - at < 1 ? "here now" : world.GameHours - at < 24 ? "seen today" : $"seen {Math.Floor((world.GameHours - at) / 24)} days ago"
-                : "not seen lately";
+                : own.Contains(id) ? "in your faction" : "not seen lately";
             return new PolicyLine(id, SettlerData.RaceName(id), state.AttackOnSight.Contains(id), seen);
         }).OrderBy(p => p.Name, StringComparer.Ordinal)];
     }
@@ -309,7 +410,7 @@ public sealed partial class FiefdomSystem
             string post = _holders.TryGetValue(id, out var h) ? $"{NameOfPost(world, h)}, {Names.Of(h.Shift)}"
                 : _runners.ContainsKey(id) ? "food runner, day and night"
                 : IsGuard(id) ? $"guard, {((_rules.GetValueOrDefault(r.Home) & BuildingRule.GateDuty) != 0 ? "gates" : "patrol")}, {NameOfSite(world, r.Home)}" : "";
-            people.Add(new PersonLine(c, r.Name, post));
+            people.Add(new PersonLine(c, r.Name, post, r.FromPlayer));
         }
         return people;
     }
@@ -378,11 +479,12 @@ public sealed partial class FiefdomSystem
     /// <summary>
     /// When the next group comes, in words.
     /// </summary>
-    static string NextGroupText(World world, TownState state, bool coming, int free, int residents, int pull)
+    static string NextGroupText(World world, TownState state, bool coming, bool hasHome, int free, int residents, int pull, bool robotCanCome)
     {
         if (!state.Open) return "Closed: no settlers come.";
         if (coming) return "A group is coming: no other comes until it has settled or gone.";
-        if (free <= 0) return "No free bed: let residents live in a building (its own panel) and build beds in it.";
+        if (!hasHome) return "No home yet: let residents live in a building (its own panel).";
+        if (free <= 0 && !robotCanCome) return "No free bed: build beds in a residents' home (robotic races need no bed).";
         if (residents >= state.Cap) return "The town is at its cap.";
         if (pull < NoArrivalsBelow) return $"The pull is below {NoArrivalsBelow}: nobody wants to come.";
         if (double.IsNaN(state.NextArrival)) return "Working out when the next group comes.";

@@ -3,6 +3,7 @@ using Meitou.Simulation.Ai;
 using Meitou.Simulation.Construction;
 using Meitou.Simulation.Factions;
 using Meitou.Data.World;
+using Meitou.Simulation.Items;
 using Meitou.Simulation.Population;
 
 namespace Fiefdom;
@@ -21,18 +22,55 @@ public sealed partial class FiefdomSystem
     const double VisitHours = 8;
 
     /// <summary>
-    /// Where visitors go in a town: its public building with a shop counter inside, or a counter standing outdoors (the one with the most for
-    /// sale), else none (they stay at the town's middle).
+    /// Floor on hours between visitor groups when multiple active merchants increase town draw.
     /// </summary>
-    BuildSite? ShopBuilding(World world, PlayerTown town) =>
-        PublicCounters(world, town).GroupBy(c => c.Site.Parent ?? c.Site.Id).OrderByDescending(g => g.Sum(c => c.Stock.Items.Count))
-            .ThenBy(g => g.Key, StringComparer.Ordinal).Select(g => world.Buildings.Find(g.Key)).FirstOrDefault();
+    const double MinVisitorHours = 6;
 
     /// <summary>
-    /// The town's shop counters of the player's that sell to visitors, with their goods: complete, and inside a complete public building of the
+    /// Active staffed merchant shops in <paramref name="town"/> whose counter is complete and open to visitors (in a public building or outdoors)
+    /// and whose squad has an open faction shop.
+    /// </summary>
+    IEnumerable<(BuildSite Site, Squad Squad, Inventory Stock)> ActiveMerchantShops(World world, PlayerTown town)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var holder in _holders.Values)
+        {
+            if (holder.Offer != 0 || !seen.Add(holder.Site)) continue;
+            if (world.Buildings.Find(holder.Site) is not { Complete: true } site || site.Owner != world.Player.Faction) continue;
+            if (!SellsToVisitors(world, town, site)) continue;
+            if (ShopSquadOf(world, holder.Site) is not { Shop: { } shop } squad || LivingIn(world, squad) == 0) continue;
+            yield return (site, squad, shop.Stock);
+        }
+    }
+
+    /// <summary>
+    /// Where visitors go in a town: its public building with the most stocked shop goods (from active merchant shops or unstaffed player counters),
+    /// or an outdoor stall/counter, else none (they stay at the town's middle).
+    /// </summary>
+    BuildSite? ShopBuilding(World world, PlayerTown town)
+    {
+        var scores = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var (site, _, stock) in ActiveMerchantShops(world, town))
+        {
+            if (stock.Items.Count == 0) continue;
+            string key = site.Parent ?? site.Id;
+            scores[key] = scores.GetValueOrDefault(key) + stock.Items.Count;
+        }
+        foreach (var (site, stock) in PublicCounters(world, town))
+        {
+            if (stock.Items.Count == 0) continue;
+            string key = site.Parent ?? site.Id;
+            scores[key] = scores.GetValueOrDefault(key) + stock.Items.Count;
+        }
+        return scores.OrderByDescending(static p => p.Value).ThenBy(static p => p.Key, StringComparer.Ordinal)
+            .Select(p => world.Buildings.Find(p.Key)).FirstOrDefault();
+    }
+
+    /// <summary>
+    /// The town's unstaffed player shop counters that sell to visitors, with their goods: complete, and inside a complete public building of the
     /// town or standing outdoors in it (where the placement rule lets furniture stand; such a counter is open while the town is).
     /// </summary>
-    IEnumerable<(BuildSite Site, Meitou.Simulation.Items.Inventory Stock)> PublicCounters(World world, PlayerTown town)
+    IEnumerable<(BuildSite Site, Inventory Stock)> PublicCounters(World world, PlayerTown town)
     {
         foreach (var m in world.Machines.All)
         {
@@ -51,21 +89,36 @@ public sealed partial class FiefdomSystem
         : TownOf(world, counter) == town.Number;
 
     /// <summary>
-    /// The visitors buy at the town's counters: each member buys one item, the first on the counters (food first) the group's purse can pay
-    /// for and the member can carry, at the item's own value from the group's purse into the player's money, as a sale at a player's counter
-    /// pays, the counter's merchant owed their share as for any sale there. The news says what they spent.
+    /// The visitors buy at the town's merchant shops and unstaffed player counters: each member buys one item (food first) the group's purse can
+    /// pay for and the member can carry. A purchase from a merchant's shop pays the player's cut (default 15%) to the player and the rest into the
+    /// merchant's shop purse; a purchase from an unstaffed player counter pays 100% to the player.
     /// </summary>
     void VisitorsBuy(World world, PlayerTown town, TownState state, SettlerGroup group, Squad squad)
     {
+        var merchantShops = ActiveMerchantShops(world, town).ToList();
         var counters = PublicCounters(world, town).ToList();
         var table = world.Characters;
         int bought = 0;
         long spent = 0;
+        long playerCutTotal = 0;
+        bool touchedCounters = false;
+        int cutPercent = Math.Clamp(FiefdomSettings.Current.PlayerSalesCutPercent, 0, 100);
+
         foreach (var m in squad.Members)
         {
             if (!table.TryResolveNext(m, out int slot) || !table.Next[slot].Alive || table.Cold(slot) is not { Medical.Incapacitated: false, Inventory: { } inv }) continue;
-            var goods = counters.SelectMany(c => c.Stock.Items.Select(i => (c.Stock, Item: i)))
-                .OrderByDescending(p => p.Item.IsFood).ThenBy(p => p.Item.Record, StringComparer.Ordinal).ToList();
+
+            var goods = new List<(Inventory Stock, ItemInstance Item, Squad? Merchant)>();
+            foreach (var (_, merchant, stock) in merchantShops)
+                foreach (var entry in stock.Items) goods.Add((stock, entry, merchant));
+            foreach (var (_, stock) in counters)
+                foreach (var entry in stock.Items) goods.Add((stock, entry, null));
+
+            goods.Sort(static (a, b) =>
+            {
+                int food = b.Item.IsFood.CompareTo(a.Item.IsFood);
+                return food != 0 ? food : StringComparer.Ordinal.Compare(a.Item.Record, b.Item.Record);
+            });
             if (goods.Count == 0) break;
             if (Affordable(goods, squad.Money, inv) is not { } choice) continue;
 
@@ -76,15 +129,32 @@ public sealed partial class FiefdomSystem
             else item.Quantity -= 1;
             inv.AddTo(Carried, one);
             squad.Money -= price;
-            world.Player.Money += price;
-            OweShare(world, counters.First(c => c.Stock == choice.Stock).Site.Id, price, $"{one.Name} to a visitor, group {group.Serial}");
+
+            if (choice.Merchant is { } merchantSquad)
+            {
+                long cut = price * cutPercent / 100;
+                world.Player.Money += cut;
+                merchantSquad.Money += price - cut;
+                playerCutTotal += cut;
+                RecordPlayerCut(state.Key, cut);
+                Log($"group {group.Serial}: {table.Cold(slot)!.Name} bought {one.Name} from merchant squad {merchantSquad.Id} for {price} (player cut {cut}, merchant purse {merchantSquad.Money})");
+            }
+            else
+            {
+                world.Player.Money += price;
+                touchedCounters = true;
+                Log($"group {group.Serial}: {table.Cold(slot)!.Name} bought {one.Name} from player counter for {price}");
+            }
+
             bought++;
             spent += price;
-            Log($"group {group.Serial}: {table.Cold(slot)!.Name} bought {one.Name} for {price}");
         }
-        if (bought > 0) world.Machines.Touch();
+        if (touchedCounters) world.Machines.Touch();
         string name = _data.Db.Find(group.Template)?.Name ?? "travellers";
-        state.Tell(world.GameHours, bought > 0 ? $"visitors ({name}) bought {bought} item{(bought > 1 ? "s" : "")} for {spent} cats" : $"visitors ({name}) found nothing they could buy");
+        string cutNote = playerCutTotal > 0 ? $" (your cut: {playerCutTotal} cats)" : "";
+        state.Tell(world.GameHours, bought > 0
+            ? $"visitors ({name}) bought {bought} item{(bought > 1 ? "s" : "")} for {spent} cats{cutNote}"
+            : $"visitors ({name}) found nothing they could buy");
         Log($"group {group.Serial}: bought {bought} for {spent}; purse now {squad.Money}, player has {world.Player.Money}");
     }
 
@@ -92,8 +162,8 @@ public sealed partial class FiefdomSystem
     /// The first of <paramref name="goods"/> the group can pay for out of <paramref name="purse"/> and the member can carry in
     /// <paramref name="carried"/>; null when there is none.
     /// </summary>
-    (Meitou.Simulation.Items.Inventory Stock, Meitou.Simulation.Items.ItemInstance Item)? Affordable(List<(Meitou.Simulation.Items.Inventory Stock, Meitou.Simulation.Items.ItemInstance Item)> goods,
-        long purse, Meitou.Simulation.Items.Inventory carried)
+    (Inventory Stock, ItemInstance Item, Squad? Merchant)? Affordable(List<(Inventory Stock, ItemInstance Item, Squad? Merchant)> goods,
+        long purse, Inventory carried)
     {
         foreach (var g in goods)
         {
@@ -109,16 +179,20 @@ public sealed partial class FiefdomSystem
     /// <summary>
     /// What one of <paramref name="item"/> costs a visitor: its record's value, at least 1.
     /// </summary>
-    long PriceOf(Meitou.Simulation.Items.ItemInstance item) => Math.Max(1, _data.Db.Find(item.Record)?.GetInt("value") ?? 1);
+    long PriceOf(ItemInstance item) => Math.Max(1, _data.Db.Find(item.Record)?.GetInt("value") ?? 1);
 
     /// <summary>
-    /// Brings visitors to a town open to the public when they are due: one group at a time, every so often (the setting, give or take half),
-    /// drawn from the region's own wandering groups as settlers are, under the same race and weather rules.
+    /// Brings visitors to a town open to the public when they are due: one group at a time, every so often (the setting, shortened by active
+    /// stocked merchants in town, give or take half), drawn from the region's own wandering groups as settlers are, under the same race and weather rules.
     /// </summary>
     void Visits(World world, PlayerTown town, TownState state)
     {
-        double every = FiefdomSettings.Current.VisitorHours;
-        if (!town.Public || every <= 0 || _groups.Values.Any(g => g.Town == state.Key && g.Visiting)) return;
+        double baseEvery = FiefdomSettings.Current.VisitorHours;
+        if (!town.Public || baseEvery <= 0 || _groups.Values.Any(g => g.Town == state.Key && g.Visiting)) return;
+
+        int merchants = ActiveMerchantShops(world, town).Count(static s => s.Stock.Items.Count > 0);
+        double every = merchants > 0 ? Math.Max(MinVisitorHours, baseEvery / (1.0 + 0.25 * Math.Min(merchants, 4))) : baseEvery;
+
         double now = world.GameHours;
         if (double.IsNaN(state.NextVisit))
         {

@@ -119,12 +119,13 @@ public sealed partial class FiefdomSystem : IStorageFilter
     }
 
     /// <summary>
-    /// The building id in a squad's tag (home or guardhouse), or null for another tag.
+    /// The building id in a squad's tag (home, guardhouse or merchant shop), or null for another tag.
     /// </summary>
     static string? SiteOfTag(string tag)
     {
         if (tag.StartsWith(HomeTag, StringComparison.Ordinal)) return tag[HomeTag.Length..];
         if (tag.StartsWith(GuardTag, StringComparison.Ordinal)) return tag[GuardTag.Length..];
+        if (tag.StartsWith(ShopTag, StringComparison.Ordinal)) return tag[ShopTag.Length..];
         return null;
     }
 

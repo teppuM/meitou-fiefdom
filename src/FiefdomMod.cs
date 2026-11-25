@@ -26,6 +26,7 @@ public sealed class FiefdomMod : IMod
             : "this game has no per-squad options: guards follow the player's AI tab");
         SortBuildings(context.Data);
         string settlers = SettlerData.Load(context.Data, context.Log);
+        string catalog = ShopCatalog.Load(context.Data, context.Log);
         context.AddJobType((Meitou.Data.Gameplay.Ai.TaskType)FiefdomSystem.MerchantRow, "Keeping a shop counter");
         context.AddJobType((Meitou.Data.Gameplay.Ai.TaskType)FiefdomSystem.RunnerRow, "Carrying meals");
         context.AddJobType((Meitou.Data.Gameplay.Ai.TaskType)FiefdomSystem.KitRow, "Fetching a first aid kit");
@@ -42,6 +43,8 @@ public sealed class FiefdomMod : IMod
         context.AddDebugCommand("Fiefdom: put first aid kits in town stock (testing)", KitsNow, hasField: true);
         context.AddDebugCommand("Fiefdom: log what townspeople are doing", MindsNow);
         context.AddDebugCommand("Fiefdom: set relations with a faction (testing)", RelationNow, hasField: true);
+        context.AddDebugCommand("Fiefdom: settle selected character in town (testing)", SettleNow);
+        context.AddDebugCommand("Fiefdom: reclaim first settled resident (testing)", ReclaimNow);
         context.Log($"{FiefdomSystem.RuleRecords.Count} buildings can take rules, {FiefdomSystem.StorageRecords.Count} are storage; {settlers}");
     }
 
@@ -64,6 +67,21 @@ public sealed class FiefdomMod : IMod
         if (context.Selected.Count == 0) return "Select one of your characters first.";
         foreach (int town in FiefdomSystem.View.Towns) context.Enqueue(new AppointSteward(town, context.Selected[0]) { Tick = context.Tick });
         return "Appointed, if they stand in a Fiefdom town.";
+    }
+
+    static string SettleNow(DebugCommandContext context)
+    {
+        if (context.Selected.Count == 0) return "Select one of your characters first.";
+        foreach (int town in FiefdomSystem.View.Towns) context.Enqueue(new SettleMember(town, context.Selected[0]) { Tick = context.Tick });
+        return "Settled, if they stand in a Fiefdom town with room.";
+    }
+
+    static string ReclaimNow(DebugCommandContext context)
+    {
+        if (FiefdomSystem.View.Reclaimable.Count == 0) return "No reclaimable resident.";
+        var who = FiefdomSystem.View.Reclaimable.First();
+        context.Enqueue(new ReclaimResident(who) { Tick = context.Tick });
+        return "Reclaiming settled resident.";
     }
 
     /// <summary>
@@ -168,14 +186,20 @@ public sealed class FiefdomMod : IMod
     {
         var rules = new HashSet<string>(StringComparer.Ordinal);
         var storage = new HashSet<string>(StringComparer.Ordinal);
+        var counters = new HashSet<string>(StringComparer.Ordinal);
         foreach (var record in db.OfType(FcsRecordType.Building))
         {
             var build = BuildingBuildData.From(record);
             if (CanTakeRules(build)) rules.Add(build.Id);
-            if (MachineData.From(db, record) is { IsStorage: true }) storage.Add(build.Id);
+            if (MachineData.From(db, record) is { } machine)
+            {
+                if (machine.IsStorage) storage.Add(build.Id);
+                if (machine.Function == FiefdomSystem.ShopCounterFunction) counters.Add(build.Id);
+            }
         }
         FiefdomSystem.RuleRecords = rules;
         FiefdomSystem.StorageRecords = storage;
+        FiefdomSystem.CounterRecords = counters;
     }
 
     /// <summary>

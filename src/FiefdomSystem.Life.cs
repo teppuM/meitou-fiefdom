@@ -79,14 +79,14 @@ public sealed partial class FiefdomSystem
                 var at = table.Next[i].Position;
                 float d2 = Vector2.DistanceSquared(new(at.X, at.Z), centre);
                 if (d2 > near2) continue;
+                if (cold.Race?.StringId is { } race && (!state.Seen.TryGetValue(race, out double last) || world.GameHours - last > 1))
+                    state.Seen[race] = world.GameHours;
                 if (cold.IsPlayer)
                 {
                     if (d2 <= r2 && world.Squads.Find(cold.SquadId) is { Independent: false } squad && !squad.ModTags.ContainsKey(ModId)) mine.Add(at);
                     continue;
                 }
-                if (cold.Race?.StringId is not { } race) continue;
-                if (!state.Seen.TryGetValue(race, out double last) || world.GameHours - last > 1) state.Seen[race] = world.GameHours;
-                if (d2 <= r2) outsiders.Add((i, race, d2));
+                if (cold.Race?.StringId is { } outsiderRace && d2 <= r2) outsiders.Add((i, outsiderRace, d2));
             }
             foreach (var race in state.Seen.Where(p => world.GameHours - p.Value > SeenFor && !state.AttackOnSight.Contains(p.Key)).Select(p => p.Key).ToList())
                 state.Seen.Remove(race);
